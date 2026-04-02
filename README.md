@@ -46,31 +46,48 @@ Done.
 
 ### Prerequisites
 
-1. **SSH**: `ssh my-server` must work in your terminal without a password prompt. Fix SSH first if it doesn't.
-2. **Virtuoso**: a Virtuoso process must be running on the remote machine.
+1. **SSH**: `ssh my-server` must work in your terminal without a password prompt.
+2. **Virtuoso**: a Virtuoso process must be running on the remote (or local) machine.
 
 ## Architecture
 
-> Want to understand the raw mechanism? See [`core/`](core/) — the entire bridge distilled into 3 files (180 lines), with no dependencies, no CLI, no auto-reconnect. Read it first, then use the full package.
+The bridge is two independent layers:
 
 ```
-Local Machine (any OS)            Remote Virtuoso Server
-──────────────────────            ──────────────────────
-Python script                     Virtuoso (running)
-    │                                 │
-    ▼                                 ▼
-BridgeClient ──TCP──► BridgeService  RAMIC daemon (Python 2.7)
-                          │              │
-                          └──SSH tunnel──┘
-                                 │
-                              SKILL execution
+┌─────────────────┐          ┌──────────────────────────────────┐
+│  Your Machine   │          │   Remote Virtuoso Server         │
+│                 │          │                                  │
+│  BridgeClient   │          │   RAMIC daemon (Python)          │
+│       │         │          │       │                          │
+│       ▼         │          │       ▼                          │
+│  RAMICBridge    │──TCP───► │   evalstring() in Virtuoso       │
+│  (pure TCP)     │          │                                  │
+│                 │          │                                  │
+│  TunnelService  │──SSH───► │   (port forward + file transfer) │
+│  (SSH tunnel)   │          │                                  │
+└─────────────────┘          └──────────────────────────────────┘
 ```
 
-Three capabilities:
+- **RAMICBridge** — pure TCP SKILL client. No SSH awareness. Sends SKILL over TCP, gets results.
+- **TunnelService** — manages SSH tunnel, uploads daemon to remote, handles file transfer. Provides the `localhost:port` endpoint that RAMICBridge connects to.
+- **BridgeClient** — thin JSON client that talks to the BridgeService (which wraps RAMICBridge + TunnelService).
 
-1. **SKILL execution** — send SKILL commands to a running Virtuoso, get results back
-2. **Layout & Schematic editing** — Python API for creating/modifying cellviews
-3. **Spectre simulation** — run simulations remotely, parse results automatically
+These two layers are fully decoupled: RAMICBridge works with any TCP endpoint (SSH tunnel, VPN, direct LAN, local).
+
+> Want to understand the raw mechanism? See [`core/`](core/) — the entire bridge distilled into 3 files (180 lines).
+
+### Local mode (no SSH)
+
+If Virtuoso runs on your local machine:
+
+```python
+from virtuoso_bridge import RAMICBridge
+
+bridge = RAMICBridge.local(port=65432)
+bridge.execute_skill("1+2")
+```
+
+No tunnel, no `.env`, no SSH. Just load `core/ramic_bridge.il` in Virtuoso CIW and connect.
 
 ## CLI
 
@@ -78,7 +95,7 @@ Three capabilities:
 virtuoso-bridge init      # create .env template
 virtuoso-bridge start     # start the bridge service
 virtuoso-bridge restart   # force-restart
-virtuoso-bridge status    # check connection health + Spectre license
+virtuoso-bridge status    # check connection + Spectre license
 ```
 
 ## Build & Test

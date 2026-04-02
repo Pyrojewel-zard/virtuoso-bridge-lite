@@ -1,102 +1,101 @@
 # AGENTS.md — AI Agent Guide for virtuoso-bridge-lite
 
-Remote Cadence Virtuoso control over SSH. Python on your machine, SKILL executes on the server.
+Control Cadence Virtuoso via Python — remotely over SSH or locally on the same machine.
+
+## Two modes
+
+| Mode | When | Setup |
+|---|---|---|
+| **Remote** | Virtuoso on a server, you work locally | Set `VB_REMOTE_HOST` in `.env`, run `virtuoso-bridge start` |
+| **Local** | Virtuoso on your own machine | Load `core/ramic_bridge.il` in CIW, use `RAMICBridge.local()` |
 
 ## First-time setup check
 
-When a user first opens this project or asks to get started, run these checks **before anything else**:
+When a user first opens this project, run these checks **before anything else**:
+
+### Remote mode
 
 1. **Check `.env`** — does it exist and have `VB_REMOTE_HOST` set?
-   - If not: run `pip install -e .` then `virtuoso-bridge init`, and ask the user to fill in their SSH host.
+   - If not: `pip install -e .` then `virtuoso-bridge init`, ask the user to fill in their SSH host.
 
-2. **Check SSH** — can we reach the remote machine?
-   ```bash
-   ssh <VB_REMOTE_HOST> echo ok
-   ```
-   - If this fails: SSH is not configured. Tell the user to fix SSH first (keys, config, jump host). The bridge cannot help with SSH setup — it assumes `ssh <host>` already works.
+2. **Check SSH** — `ssh <VB_REMOTE_HOST> echo ok`
+   - If this fails: tell the user to fix SSH first. The bridge assumes `ssh <host>` already works.
 
-3. **Check Virtuoso** — is a Virtuoso process running on the remote?
-   ```bash
-   ssh <VB_REMOTE_HOST> "pgrep -f virtuoso"
-   ```
-   - If no process: tell the user to start Virtuoso on the remote machine first.
+3. **Check Virtuoso** — `ssh <VB_REMOTE_HOST> "pgrep -f virtuoso"`
+   - If no process: tell the user to start Virtuoso first.
 
 4. **Start bridge** — `virtuoso-bridge start`
-   - If status is "degraded": the RAMIC daemon needs loading. Tell the user to paste the `load("...")` command shown in the output into the Virtuoso CIW window.
+   - If "degraded": tell the user to paste the `load("...")` command in Virtuoso CIW.
 
 5. **Verify** — `virtuoso-bridge status`
-   - Should show: service running, tunnel alive, daemon OK.
 
-6. **Quick test** — run a SKILL expression:
+6. **Quick test** — `BridgeClient().execute_skill("1+2")`
+
+### Local mode
+
+1. **Check Virtuoso is running locally**
+
+2. **Load daemon** — in Virtuoso CIW: `load("/path/to/core/ramic_bridge.il")`
+
+3. **Connect** —
    ```python
-   from virtuoso_bridge import BridgeClient
-   print(BridgeClient().execute_skill("1+2"))
+   from virtuoso_bridge import RAMICBridge
+   bridge = RAMICBridge.local(port=65432)
+   bridge.execute_skill("1+2")
    ```
 
-Only proceed with the user's actual task after these checks pass.
+## Architecture
+
+Two decoupled layers:
+
+- **RAMICBridge** — pure TCP SKILL client. No SSH. Works with any `localhost:port` endpoint.
+- **TunnelService** — manages SSH tunnel + remote daemon deployment. Optional.
+
+```python
+# Remote: TunnelService creates the TCP path
+from virtuoso_bridge import TunnelService, RAMICBridge
+tunnel = TunnelService.from_env()
+tunnel.warm()
+bridge = RAMICBridge.from_tunnel(tunnel)
+
+# Local: no tunnel needed
+bridge = RAMICBridge.local(port=65432)
+
+# Either way, same API:
+bridge.execute_skill("1+2")
+```
 
 ## Key conventions
 
-- All SKILL execution goes through `BridgeClient`. Never SSH into the machine and run SKILL manually.
-- Layout/schematic editing uses `client.layout.edit()` / `client.schematic.edit()` context managers.
-- Spectre simulation uses `SpectreSimulator.from_env()`. Requires `VB_CADENCE_CSHRC` in `.env`.
-- The `core/` directory is for understanding the mechanism (3 files, 180 lines). Don't use it in production — use the installed package.
-- Examples are in `examples/`. They all work out of the box after bridge setup.
+- All SKILL execution goes through `BridgeClient` or `RAMICBridge`. Never SSH and run SKILL manually.
+- Layout/schematic editing: `client.layout.edit()` / `client.schematic.edit()` context managers.
+- Spectre simulation: `SpectreSimulator.from_env()`. Requires `VB_CADENCE_CSHRC` in `.env`.
+- `core/` is for understanding the mechanism (3 files, 180 lines). Use the installed package for real work.
 
 ## How to configure PDK paths
 
-You do **not** need to manually look up PDK paths. Instead:
-
-1. Open any testbench in Virtuoso
-2. Export the netlist: **Simulation > Netlist > Create**
-3. The `.scs` file contains all the info you need:
+Export a netlist from Virtuoso (**Simulation > Netlist > Create**). The `.scs` file contains everything:
 
 ```spectre
 include "/path/to/pdk/models/spectre/toplevel.scs" section=TOP_TT
-
 M0 (VOUT VIN VSS VSS) nch_ulvt_mac l=30n w=1u nf=1
 ```
 
-From this you know: PDK model paths, device names (`nch_ulvt_mac`), library names, default parameters, and Spectre syntax. No manual configuration needed.
-
 ## Skills
-
-The `skills/` directory contains context documents that teach agents how to use the bridge:
 
 | Skill | File | Covers |
 |---|---|---|
-| `virtuoso` | `skills/virtuoso/SKILL.md` | Bridge startup, SKILL execution, layout/schematic editing |
-| `spectre` | `skills/spectre/SKILL.md` | Netlist preparation, remote simulation, result parsing |
-
-### Installation
-
-Copy skill files into your agent's skill directory:
-
-```bash
-# Claude Code
-cp -r skills/virtuoso .claude/skills/
-cp -r skills/spectre  .claude/skills/
-
-# Cursor
-cp skills/virtuoso/SKILL.md .cursor/rules/virtuoso.md
-cp skills/spectre/SKILL.md  .cursor/rules/spectre.md
-
-# Other agents — place wherever your tool reads context from
-```
-
-### Skill reference files
+| `virtuoso` | `skills/virtuoso/SKILL.md` | SKILL execution, layout/schematic editing |
+| `spectre` | `skills/spectre/SKILL.md` | Simulation, result parsing |
+| `optimizer` | `skills/optimizer/SKILL.md` | Parameter optimization loops |
 
 ```
 skills/virtuoso/
-  SKILL.md                              # main skill document
+  SKILL.md
   references/
-    layout.md                           # layout editing patterns and SKILL examples
-    schematic.md                        # schematic editing patterns
-    t28_metal_rules.md                  # metal width/spacing rules (T28 example)
-    bindkey_operation_index.md          # Virtuoso bindkey reference
-  assets/
-    cfmom_unary_cdac_reference.py       # real-world layout example
+    layout.md       # layout API reference
+    schematic.md    # schematic API reference
 
 skills/spectre/
-  SKILL.md                              # Spectre simulation workflow
+  SKILL.md          # simulation workflow + result parsing
 ```
