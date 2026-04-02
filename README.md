@@ -11,7 +11,7 @@
 
 Control a remote Cadence Virtuoso from any machine over SSH. No VNC, no X11, no manual terminal sessions.
 
-Use a coding agent (Claude Code, Cursor, etc.) to read this repo and tailor it to your project — PDK, libraries, tech node, directory structure. You describe intent; the agent writes SKILL, builds layouts, runs simulations.
+Use a coding agent (Claude Code, Cursor, etc.) to read this repo and tailor it to your project — PDK, libraries, tech node, directory structure. You describe intent; the agent writes SKILL, builds layouts, runs simulations, and optimizes circuit parameters.
 
 > **If you are an AI agent**, read [`AGENTS.md`](AGENTS.md) first and follow its setup checklist.
 
