@@ -71,7 +71,7 @@ def main() -> int:
     if not lib or not cell:
         lib, cell, view = client.get_current_design(timeout=10)
         if not lib or not cell or view != "schematic":
-            print("No active schematic. Pass LIB CELL or open a schematic first.")
+            print("No active schematic. Run 01a_create_rc_stepwise.py first, then rerun this.")
             return 1
 
     run_dir = f"/tmp/virtuoso_bridge_netlist_export/{lib}/{cell}"
