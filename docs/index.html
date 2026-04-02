@@ -106,13 +106,7 @@
   <!-- Architecture -->
   <div class="section">
     <h2>Architecture</h2>
-    <p class="arch-note">Two decoupled layers — VirtuosoClient (TCP) and SSHClient (SSH) — work independently.</p>
-    <div class="arch-box">VirtuosoClient ──TCP──► RAMIC daemon ──► evalstring() in Virtuoso
-    (pure client)       (on remote)
-
-SSHClient ──SSH──► port forward + file upload
-    (optional)          (creates the TCP path above)</div>
-    <p class="arch-note" style="margin-top:8px">Local mode: skip SSHClient entirely, connect VirtuosoClient directly.</p>
+    <p style="text-align:center;margin-bottom:16px"><img src="https://raw.githubusercontent.com/Arcadia-1/virtuoso-bridge-lite/main/assets/arch.png" alt="Architecture" style="max-width:100%;border-radius:8px;border:1px solid var(--border)"/></p>
   </div>
 
   <!-- Quick Start -->
