@@ -249,7 +249,7 @@ class SSHRunner:
 
             tar_cmd = [self._tar_cmd, "cf", "-"]
             for local_path, _ in entries:
-                tar_cmd += ["-C", str(local_path.parent), local_path.name]
+                tar_cmd += ["-C", str(local_path.resolve().parent), local_path.name]
 
             logger.debug("Batch tar upload: %d file(s) -> %s:%s", len(entries), self._host, remote_dir)
             tar_proc = subprocess.Popen(tar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
