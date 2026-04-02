@@ -9,6 +9,12 @@ RBDPath = if(getShellEnvVar("RB_DAEMON_PATH") then
             else
                 "./ramic_bridge_daemon.py"
             )
+; Load RBPython from environment variable RB_PYTHON_PATH, fallback to "python" if not set
+RBPython = if(getShellEnvVar("RB_PYTHON_PATH") then
+                getShellEnvVar("RB_PYTHON_PATH")
+            else
+                "python"
+            )
 RBPort = 65432                                                                   ; TCP port for client connections
 RBLocal = nil                                                                      ; Local-only connections (127.0.0.1 vs 0.0.0.0)
 RBEcho = nil                                                                     ; Echo bridging messages for debugging
@@ -67,7 +73,7 @@ procedure(RBStart()
 				logpath = ""
 			)
 			; Start the Python daemon process with IPC handlers
-			RBIpc = ipcBeginProcess(sprintf(nil "python %L %L %L" RBDPath host RBPort) "" 'RBIpcDataHandler 'RBIpcErrHandler 'RBIpcFinishHandler logpath)
+			RBIpc = ipcBeginProcess(sprintf(nil "%s %L %L %L" RBPython RBDPath host RBPort) "" 'RBIpcDataHandler 'RBIpcErrHandler 'RBIpcFinishHandler logpath)
 		)
 		printf("[RAMIC Bridge (%L)] start at (%s)\n" RBIpc getCurrentTime())
 	)
