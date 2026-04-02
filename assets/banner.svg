@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 240">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="50%" style="stop-color:#16213e"/>
+      <stop offset="100%" style="stop-color:#0f3460"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#e94560"/>
+      <stop offset="100%" style="stop-color:#533483"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="240" rx="12" fill="url(#bg)"/>
+
+  <!-- Accent line -->
+  <rect x="40" y="185" width="120" height="3" rx="1.5" fill="url(#accent)"/>
+
+  <!-- Circuit decoration (subtle) -->
+  <g stroke="#ffffff10" stroke-width="1" fill="none">
+    <!-- Horizontal lines -->
+    <line x1="600" y1="60" x2="860" y2="60"/>
+    <line x1="650" y1="90" x2="860" y2="90"/>
+    <line x1="620" y1="120" x2="860" y2="120"/>
+    <line x1="680" y1="150" x2="860" y2="150"/>
+    <line x1="640" y1="180" x2="860" y2="180"/>
+    <!-- Vertical connections -->
+    <line x1="700" y1="60" x2="700" y2="90"/>
+    <line x1="750" y1="90" x2="750" y2="120"/>
+    <line x1="720" y1="120" x2="720" y2="150"/>
+    <line x1="780" y1="150" x2="780" y2="180"/>
+    <!-- Dots at intersections -->
+    <circle cx="700" cy="60" r="3" fill="#e9456030"/>
+    <circle cx="700" cy="90" r="3" fill="#e9456030"/>
+    <circle cx="750" cy="90" r="3" fill="#53348330"/>
+    <circle cx="750" cy="120" r="3" fill="#53348330"/>
+    <circle cx="720" cy="120" r="3" fill="#e9456020"/>
+    <circle cx="720" cy="150" r="3" fill="#e9456020"/>
+    <circle cx="780" cy="150" r="3" fill="#53348320"/>
+    <circle cx="780" cy="180" r="3" fill="#53348320"/>
+  </g>
+
+  <!-- SSH arrow decoration -->
+  <g stroke="#ffffff18" stroke-width="1.5" fill="none">
+    <path d="M580 100 Q610 100 620 80 Q630 60 660 60"/>
+    <path d="M580 130 Q620 130 640 110 Q660 90 700 90"/>
+  </g>
+
+  <!-- Title -->
+  <text x="40" y="90" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="42" font-weight="700" fill="#ffffff" letter-spacing="-1">
+    virtuoso-bridge
+    <tspan font-size="28" font-weight="400" fill="#e94560" dx="6">lite</tspan>
+  </text>
+
+  <!-- Subtitle -->
+  <text x="40" y="130" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="16" fill="#a0a0b8" letter-spacing="0.5">
+    Distilled from a production harness  |  SSH bridge  |  SKILL + Spectre  |  AI-native
+  </text>
+
+  <!-- Bottom tagline -->
+  <text x="40" y="210" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#6a6a80">
+    Control remote Cadence Virtuoso from anywhere. No VNC. No X11. Just Python + SSH.
+  </text>
+</svg>
