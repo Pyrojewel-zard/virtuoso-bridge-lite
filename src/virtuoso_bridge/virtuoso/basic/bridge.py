@@ -39,6 +39,28 @@ def _bridge_env(key: str, default: str = "") -> str:
     """Read a bridge environment variable from ``VB_*`` names only."""
     return os.getenv(key, default).strip()
 
+
+def _update_env_file(key: str, value: str) -> bool:
+    """Update a key=value in the nearest .env file. Returns True if written."""
+    # Walk up from cwd to find .env
+    here = Path.cwd()
+    for parent in [here, *here.parents]:
+        env_path = parent / ".env"
+        if env_path.is_file():
+            text = env_path.read_text(encoding="utf-8")
+            new_text = re.sub(
+                rf"^{re.escape(key)}\s*=.*$",
+                f"{key}={value}",
+                text,
+                flags=re.MULTILINE,
+            )
+            if new_text != text:
+                env_path.write_text(new_text, encoding="utf-8")
+                logger.info("Updated %s=%s in %s", key, value, env_path)
+                return True
+            return False
+    return False
+
 def _default_remote_port(username: str | None = None) -> int:
     """Return a stable per-user default port in the range 65000–65499."""
     user = username or os.getenv("VB_REMOTE_USER", "").strip()
@@ -1000,24 +1022,15 @@ class RAMICBridge(VirtuosoInterface):
 
     # -- SSH tunnel ---------------------------------------------------------
 
-    def ensure_ssh_tunnel(self) -> None:
-        """Ensure an SSH port-forward tunnel is running."""
-        if self._ssh_tunnel_proc is not None and self._ssh_tunnel_proc.poll() is None:
-            return
-        if self._using_external_tunnel:
-            if self._can_reuse_existing_tunnel():
-                return
-            self._using_external_tunnel = False
-        if not self._remote_host:
-            return
-
+    def _try_ssh_tunnel(self, port: int) -> subprocess.Popen[bytes] | None:
+        """Try to start an SSH tunnel on *port*. Returns the Popen or None on failure."""
         cmd: list[str] = ["ssh"]
         cmd += [
             "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=no",
             "-o", "ExitOnForwardFailure=yes",
             "-N",
-            "-L", f"{self._port}:localhost:{self._port}",
+            "-L", f"{port}:localhost:{port}",
         ]
         if self._jump_host:
             jump_user = self._jump_user or self._remote_user
@@ -1034,7 +1047,7 @@ class RAMICBridge(VirtuosoInterface):
 
         logger.info("Starting SSH tunnel: %s", " ".join(cmd))
         print(f"[cmd] {' '.join(cmd)}", flush=True)
-        self._ssh_tunnel_proc = subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -1043,33 +1056,64 @@ class RAMICBridge(VirtuosoInterface):
 
         startup_deadline = time.monotonic() + _TUNNEL_STARTUP_SETTLE_SECONDS
         while time.monotonic() < startup_deadline:
-            if self._ssh_tunnel_proc.poll() is not None:
+            if proc.poll() is not None:
                 break
             time.sleep(0.05)
 
-        if self._ssh_tunnel_proc.poll() is not None:
-            stderr = self._ssh_tunnel_proc.stderr
+        if proc.poll() is not None:
+            stderr = proc.stderr
             err_msg = stderr.read().decode("utf-8", errors="ignore") if stderr else ""
             if self._should_reuse_existing_tunnel(err_msg):
-                logger.info(
-                    "Reusing existing local tunnel/daemon path at %s:%d",
-                    self._host,
-                    self._port,
-                )
-                self._ssh_tunnel_proc = None
+                logger.info("Reusing existing tunnel at %s:%d", self._host, port)
                 self._using_external_tunnel = True
+                return None  # no proc, but tunnel exists
+            return proc  # failed — caller checks returncode
+        return proc  # running
+
+    def ensure_ssh_tunnel(self) -> None:
+        """Ensure an SSH port-forward tunnel is running, auto-retrying on port conflict."""
+        if self._ssh_tunnel_proc is not None and self._ssh_tunnel_proc.poll() is None:
+            return
+        if self._using_external_tunnel:
+            if self._can_reuse_existing_tunnel():
                 return
-            logger.error("SSH tunnel exited immediately: %s", err_msg)
+            self._using_external_tunnel = False
+        if not self._remote_host:
+            return
+
+        max_attempts = 10
+        port = self._port
+        for attempt in range(max_attempts):
+            proc = self._try_ssh_tunnel(port)
+            if proc is None:
+                # Reusing existing tunnel
+                self._port = port
+                return
+            if proc.poll() is None:
+                # Tunnel is running
+                self._ssh_tunnel_proc = proc
+                if port != self._port:
+                    logger.info("Port %d was busy, using port %d instead", self._port, port)
+                    print(f"[port] {self._port} busy, auto-switched to {port}", flush=True)
+                    self._port = port
+                    _update_env_file("VB_REMOTE_PORT", str(port))
+                logger.info(
+                    "SSH tunnel established (PID %d): localhost:%d -> %s:localhost:%d",
+                    proc.pid, port, self._remote_host, port,
+                )
+                return
+            # Failed — check if it's a port conflict
+            stderr = proc.stderr
+            err_msg = stderr.read().decode("utf-8", errors="ignore") if stderr else ""
+            if "address already in use" in err_msg.lower() or "cannot listen" in err_msg.lower():
+                logger.info("Port %d in use, trying %d", port, port + 1)
+                port += 1
+                continue
+            # Non-port error — give up
             details = self._ssh_runner._summarize_ssh_transport_error(err_msg) if self._ssh_runner else err_msg
             raise RuntimeError(f"SSH tunnel failed to start: {details}")
 
-        logger.info(
-            "SSH tunnel established (PID %d): localhost:%d -> %s:localhost:%d",
-            self._ssh_tunnel_proc.pid,
-            self._port,
-            self._remote_host,
-            self._port,
-        )
+        raise RuntimeError(f"Could not find a free port after {max_attempts} attempts (tried {self._port}–{port - 1})")
 
     def _execute_skill_once(self, skill_code: str, effective_timeout: int) -> str:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

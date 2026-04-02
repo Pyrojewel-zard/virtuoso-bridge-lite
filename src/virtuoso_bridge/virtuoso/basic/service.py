@@ -383,20 +383,33 @@ class BridgeService:
             logger.info("Bridge service already running at %s:%d", _SERVICE_HOST, self.port)
             return self.read_state() or probe.get("service_state")
         if probe is not None:
-            error_state = {
-                "service": _SERVICE_NAME,
-                "protocol_version": _PROTOCOL_VERSION,
-                "status": "error",
-                "port": self.port,
-                "host": _SERVICE_HOST,
-                "error": (
-                    f"Port {self.port} is occupied by an incompatible service. "
-                    "Stop the old service or choose a different VB_LOCAL_PORT."
-                ),
-            }
-            self._state_dir.mkdir(parents=True, exist_ok=True)
-            _write_state_file(self._state_path, error_state)
-            return error_state
+            # Port occupied by incompatible service — try next ports
+            original_port = self.port
+            for offset in range(1, 11):
+                candidate = original_port + offset
+                self.port = candidate
+                retry_probe = self._probe_status()
+                if retry_probe is None:
+                    logger.info("Local port %d busy, auto-switched to %d", original_port, candidate)
+                    print(f"[port] local port {original_port} busy, auto-switched to {candidate}", flush=True)
+                    from virtuoso_bridge.virtuoso.basic.bridge import _update_env_file
+                    _update_env_file("VB_LOCAL_PORT", str(candidate))
+                    break
+                if _is_compatible_status_response(retry_probe):
+                    return self.read_state() or retry_probe.get("service_state")
+            else:
+                self.port = original_port
+                error_state = {
+                    "service": _SERVICE_NAME,
+                    "protocol_version": _PROTOCOL_VERSION,
+                    "status": "error",
+                    "port": self.port,
+                    "host": _SERVICE_HOST,
+                    "error": f"Could not find a free local port (tried {original_port}–{original_port + 10}).",
+                }
+                self._state_dir.mkdir(parents=True, exist_ok=True)
+                _write_state_file(self._state_path, error_state)
+                return error_state
 
         self._state_dir.mkdir(parents=True, exist_ok=True)
         cmd = [

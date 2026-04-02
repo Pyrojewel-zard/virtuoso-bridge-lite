@@ -1,149 +1,79 @@
 ---
 name: spectre
-description: "Use this skill for Spectre simulation through virtuoso-bridge: preparing netlists, running remote simulations, downloading results, and reading simulation outputs. Does not cover live Virtuoso editing, OCEAN flows, or Calibre."
+description: "Run Cadence Spectre simulations remotely via virtuoso-bridge: upload netlists, execute, parse results."
 ---
 
 # Spectre Skill
 
-## When To Use
-
-Use this skill when the task is about:
-- running Spectre examples or new Spectre jobs
-- preparing or modifying `.scs` netlists
-- sending simulations to the remote host
-- downloading and reading simulation outputs
-- adding analysis code around Spectre results
-
-Do not use this skill for:
-- schematic/layout editing in Virtuoso
-- OCEAN script execution
-- Calibre DRC/LVS/PEX
-
-## Required Startup Check
-
-Run this first:
-
-```bash
-source .venv/bin/activate
-virtuoso-bridge status
-```
-
-If the bridge path is unhealthy, fix that first. Spectre examples depend on the same remote SSH / RAMIC path.
-
-## API Priority
-
-Prefer the highest-level API that fits:
-
-1. `SpectreSimulator.from_env(...)`
-2. packaged helper utilities in `examples/02_spectre/_result_io.py`
-3. parser helpers in `src/virtuoso_bridge/spectre/parsers.py`
-4. ad hoc file handling around returned result bundles
-
-Do not shell out to remote Spectre manually if the packaged runner can do the job.
-
-## Core APIs
-
-Main package surface:
-
-- `src/virtuoso_bridge/spectre/__init__.py`
-  - `SpectreSimulator`
-- `src/virtuoso_bridge/spectre/runner.py`
-  - `SpectreSimulator.from_env(...)`
-  - `SpectreSimulator.run_simulation(...)`
-  - `spectre_mode_args(...)`
-- `src/virtuoso_bridge/spectre/parsers.py`
-  - PSF ASCII parsing helpers
-
-Expected usage pattern:
+## What you can do
 
 ```python
 from virtuoso_bridge.spectre.runner import SpectreSimulator, spectre_mode_args
 
 sim = SpectreSimulator.from_env(
-    spectre_cmd="spectre",
-    spectre_args=spectre_mode_args("ax"),
-    work_dir=work_dir,
+    spectre_args=spectre_mode_args("ax"),  # APS mode
+    work_dir="./output",
     output_format="psfascii",
 )
-result = sim.run_simulation(netlist_path, {})
+result = sim.run_simulation("tb_inv.scs", {})
+
+print(result.status)            # ExecutionStatus.SUCCESS
+print(result.data.keys())       # ['time', 'VOUT', 'VIN', ...]
+print(result.data["VOUT"][:5])  # first 5 samples
+print(result.errors)            # any errors
+print(result.metadata)          # timings, commands, output paths
 ```
 
-## Preferred Workflow
+### With Verilog-A include files
 
-1. start from the closest packaged example
-2. keep source netlists under `examples/02_spectre/assets/` or a task-specific folder
-3. write a run-specific netlist into a task output directory if parameters need patching
-4. run through `SpectreSimulator`
-5. inspect:
-   - `result.status`
-   - `result.errors`
-   - `result.metadata`
-   - downloaded output bundle
-6. save post-processed CSV / JSON / plots next to the run output
+```python
+result = sim.run_simulation("tb_adc.scs", {
+    "include_files": ["adc_ideal.va", "dac_ideal.va"],
+})
+```
 
-When an example supports re-analysis, keep the default path as:
-- simulate + analyze
+### Check license before running
 
-Use an explicit flag such as `--analyze-only` only when the user wants to reuse an existing raw result bundle.
+```python
+sim = SpectreSimulator.from_env()
+info = sim.check_license()
+print(info["spectre_path"])  # /path/to/spectre
+print(info["version"])       # spectre version string
+print(info["licenses"])      # license feature availability
+```
 
-## Result Expectations
+## Setup
 
-The runner returns a result object with:
-- status / ok / errors / warnings
-- parsed waveform data when available
-- timing metadata for upload / execute / download phases
+Requires `VB_CADENCE_CSHRC` in `.env` — the cshrc that puts `spectre` in PATH and sets `LM_LICENSE_FILE`.
 
-When debugging failures, inspect:
-- returned `errors`
-- remote log files referenced by metadata or output bundle
-- generated run netlist
+```bash
+virtuoso-bridge status   # shows Spectre path + license status
+```
 
-## Example Index
+## Simulation modes
 
-### Main Spectre Examples
+```python
+spectre_mode_args("spectre")  # basic Spectre
+spectre_mode_args("aps")      # APS
+spectre_mode_args("ax")       # APS extended (default for examples)
+spectre_mode_args("cx")       # Spectre X custom
+```
 
-- `examples/02_spectre/01_inverter_tran.py`
-  - remote inverter transient run, CSV/JSON/plot generation, mode switching
-- `examples/02_spectre/02_veriloga_adc_dac.py`
-  - mixed Verilog-A ADC/DAC example
-- `examples/02_spectre/03_sampling_nmos.py`
-  - NMOS sampling testbench with run-time netlist patching
-- `examples/02_spectre/04_strongarm_pss_pnoise.py`
-  - StrongARM comparator single-point PSS + Pnoise
-  - default mode is simulate + analyze
-  - `--analyze-only` reuses an existing `.raw` directory
-  - writes metrics JSON, summary JSON, and a 3-row time-domain plot:
-    - `VCLK` / `VINP` / `VINN`
-    - `LP` / `LM`
-    - `DCMPP` / `DCMPN`
+## Result object
 
-### Supporting Files
+- `result.status` — SUCCESS / FAILURE / ERROR
+- `result.ok` — bool
+- `result.data` — dict of signal name → list of values
+- `result.errors` / `result.warnings` — lists of strings
+- `result.metadata["timings"]` — upload, exec, download, parse times
 
-- `examples/02_spectre/_result_io.py`
-  - common summary / CSV / timing print helpers
-- `examples/02_spectre/assets/`
-  - packaged source netlists
+## Examples
 
-## Output Conventions
+- `examples/02_spectre/01_veriloga_adc_dac.py` — 4-bit ADC/DAC with Verilog-A
+- `examples/02_spectre/04_strongarm_pss_pnoise.py` — StrongArm comparator PSS+Pnoise
 
-Preferred output artifacts:
-- waveform CSV
-- summary JSON
-- plot PNG when useful
-- metrics JSON for derived analysis values when the example computes them
+## Tips
 
-Keep these inside the example-specific output directory under `examples/02_spectre/output/`.
-
-## Guidance
-
-- prefer packaged Python APIs over manual SSH or manual file copy logic
-- keep “simulate” and “analyze” steps clearly separated in code
-- for single-point examples, do not add parameter sweeps unless the example is explicitly about sweeping
-- if a netlist needs host-specific path patching, write a derived run netlist instead of mutating the source asset
-- use `output_format="psfascii"` unless there is a clear reason not to
-
-## File Map
-
-- Spectre runtime: `src/virtuoso_bridge/spectre/`
-- examples: `examples/02_spectre/`
-- helper output utilities: `examples/02_spectre/_result_io.py`
+- Use `output_format="psfascii"` for parsed waveform data
+- If netlist needs path patching, write a derived netlist to the output dir, don't modify the source asset
+- If simulation hangs, check `virtuoso-bridge status` for license availability

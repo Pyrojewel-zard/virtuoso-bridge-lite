@@ -1,60 +1,27 @@
 # Schematic Reference
 
-## Primary Surfaces
-
-- namespace API: `client.schematic`
-- declarative editor: `SchematicEditor` from `client.schematic.edit(...)`
-
-Prefer pattern:
+## Edit Pattern
 
 ```python
-with client.schematic.edit(lib, cell) as schematic:
-    schematic.add_instance(...)
-    schematic.add_pin(...)
-    schematic.add_net_label_to_instance_term(...)
+with client.schematic.edit(lib, cell) as sch:
+    sch.add_instance("analogLib", "vdc", (0, 0), "V0", params={"vdc": "0.9"})
+    sch.add_instance("analogLib", "gnd", (0, -0.5), "GND0")
+    sch.add_wire([(0, 0), (0, 0.5)])
+    sch.add_pin("VDD", "inputOutput", (0, 1.0))
+    sch.add_label("VDD", (0, 1.0))
+    sch.add_net_label_to_instance_term("V0", "PLUS", "VDD")
+    sch.add_wire_between_instance_terms("V0", "MINUS", "GND0", "gnd!")
 ```
 
-## Namespace API
+## Read / Query
 
-- `client.schematic.edit(...)`
-- `client.schematic.open(...)`
-- `client.schematic.save(...)`
-- `client.schematic.check(...)`
-- `client.schematic.add_instance(...)`
-- `client.schematic.add_wire(...)`
-- `client.schematic.add_label(...)`
-- `client.schematic.add_pin(...)`
-- `client.schematic.add_pin_to_instance_term(...)`
-- `client.schematic.add_wire_between_instance_terms(...)`
-- `client.schematic.add_net_label_to_instance_term(...)`
+```python
+client.schematic.open(lib, cell)
+client.schematic.check(lib, cell)
+client.schematic.save(lib, cell)
+```
 
-## Editor Methods
+## Tips
 
-- `add_instance(...)`
-- `add_wire(...)`
-- `add_label(...)`
-- `add_pin(...)`
-- `add_pin_to_instance_term(...)`
-- `add_wire_between_instance_terms(...)`
-- `add_net_label_to_instance_term(...)`
-
-## Guidance
-
-- prefer `schematic` as the local variable name, not `sch`
-- use terminal-aware helpers before guessing coordinates
-- if a missing schematic primitive is needed, add a formal builder in `src/virtuoso_bridge/virtuoso/schematic/ops.py`
-- use namespace helpers for one-off direct actions; use `SchematicEditor` for multi-step edits
-
-## Schematic Examples
-
-- `examples/01_virtuoso/schematic/01_execute_operations.py`
-- `examples/01_virtuoso/schematic/02_read_connectivity.py`
-- `examples/01_virtuoso/schematic/03_create_rc.py`
-- `examples/01_virtuoso/schematic/04_create_inverter.py`
-- `examples/01_virtuoso/schematic/05_create_cellview.py`
-- `examples/01_virtuoso/schematic/06_read_instance_params.py`
-- `examples/01_virtuoso/schematic/07_export_netlist_cdl.py`
-- `examples/01_virtuoso/schematic/08_rename_instance.py`
-- `examples/01_virtuoso/schematic/09_delete_instance.py`
-- `examples/01_virtuoso/schematic/10_delete_cell.py`
-- `examples/01_virtuoso/schematic/11_screenshot.py`
+- Use terminal-aware helpers (`add_net_label_to_instance_term`, `add_wire_between_instance_terms`) instead of guessing pin coordinates
+- Use `add_pin_to_instance_term` to connect a top-level pin directly to an instance terminal

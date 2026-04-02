@@ -1,196 +1,88 @@
 ---
 name: virtuoso
-description: "Use this skill for live Virtuoso work through virtuoso-bridge: bridge startup/status, SKILL/IL execution, library/cellview queries, screenshots, and schematic/layout editing through the namespace APIs. Does not cover Spectre, OCEAN, or Calibre flows."
+description: "Bridge to remote Cadence Virtuoso: SKILL execution, layout/schematic editing via Python API."
 ---
 
 # Virtuoso Skill
 
-## When To Use
+## What you can do
 
-Use this skill when the task is about:
-- starting, checking, or restarting the bridge service
-- loading `.il` files or running raw SKILL in Virtuoso
-- reading Virtuoso library, cellview, instance, or geometry data
-- editing schematic or layout through `BridgeClient`
-- taking screenshots from schematic/layout windows
+Two approaches — use whichever fits:
 
-Do not use this skill for:
-- Spectre simulation pipelines
-- OCEAN analysis flows
-- Calibre DRC/LVS/PEX
-
-## Required Startup Check
-
-Run these before any live Virtuoso action:
-
-```bash
-source .venv/bin/activate
-virtuoso-bridge status
-```
-
-If status is not healthy:
-- try `virtuoso-bridge restart`
-- if the service says to load `virtuoso_setup.il`, do that in Virtuoso CIW first
-
-## Preferred Entry Points
-
-Use the installed CLI for service lifecycle:
-
-```bash
-virtuoso-bridge init
-virtuoso-bridge start
-virtuoso-bridge restart
-virtuoso-bridge status
-```
-
-Use Python for live operations:
+### 1. Python API (preferred)
 
 ```python
 from virtuoso_bridge import BridgeClient
-
 client = BridgeClient()
-client.layout.edit(...)
-client.schematic.edit(...)
+
+# Execute any SKILL expression
+client.execute_skill("1+2")
+client.execute_skill('hiGetCurrentWindow()')
+
+# Load a .il file into Virtuoso
+client.load_il("path/to/script.il")
+
+# Layout editing
+with client.layout.edit("myLib", "myCell") as layout:
+    layout.add_rect("M1", "drawing", (0, 0, 1, 0.5))
+    layout.add_path("M2", "drawing", [(0, 0), (1, 0)], width=0.1)
+    layout.add_label("M1", "pin", (0.5, 0.25), "VDD")
+    layout.add_instance("tsmcN28", "nch_ulvt_mac", (0, 0), "M0")
+    layout.add_via("M1_M2", (0.5, 0.25))
+    shapes = layout.get_shapes()
+
+# Schematic editing
+with client.schematic.edit("myLib", "myCell") as sch:
+    sch.add_instance("analogLib", "vdc", (0, 0), "V0", params={"vdc": "0.9"})
+    sch.add_instance("analogLib", "gnd", (0, -0.5), "GND0")
+    sch.add_wire([(0, 0), (0, 0.5)])
+    sch.add_pin("VDD", "inputOutput", (0, 1.0))
+
+# Other operations
+client.open_window("myLib", "myCell", view="layout")
+client.get_current_design()
+client.save_current_cellview()
+client.close_current_cellview()
+client.download_file(remote_path, local_path)
+client.run_shell_command("ls /tmp/")
 ```
 
-## Visibility During Trial Layout Work
+### 2. Raw SKILL (when no Python API exists)
 
-When doing temporary layout trials, parameter probes, or geometry experiments, do not work only in the background.
+Write SKILL directly for anything the Python API doesn't cover:
 
-Required behavior:
-- open the layout window for the trial cell with `client.open_window(..., view="layout")`
-- fit the view after meaningful edits
-- keep the user able to see the intermediate layout you are testing
+```python
+# Inline SKILL
+client.execute_skill('dbOpenCellViewByType("myLib" "myCell" "layout")')
 
-Reason:
-- the user wants visibility into the live trial-and-error process
-- visual feedback often catches bad assumptions before the final screenshot step
+# Or write a .il file and load it
+client.load_il("my_custom_script.il")
+# Then call functions defined in it
+client.execute_skill('myCustomFunction("arg1" "arg2")')
+```
 
-## API Priority
+For bulk operations (thousands of shapes), put the loop in a `.il` file rather than sending a giant SKILL string — keeps each request payload small while the heavy loop runs inside Virtuoso.
 
-Prefer the highest-level API that fits:
+## Startup check
 
-1. `client.schematic.edit(...)` / `client.layout.edit(...)`
-2. `client.schematic.*` / `client.layout.*`
-3. formal builder functions under `src/virtuoso_bridge/virtuoso/`
-4. raw `client.execute_skill(...)`
-5. `client.load_il(...)` + `execute_skill(...)`
+Before any live Virtuoso action:
 
-Do not hand-write low-level SKILL in examples or automation if a formal Python API already exists.
+```bash
+virtuoso-bridge status
+```
 
-## Core Client APIs
+If not healthy: `virtuoso-bridge restart`. If it says to load `virtuoso_setup.il`, paste that command in Virtuoso CIW first.
 
-Main `BridgeClient` methods that should be preferred:
+## Guidelines
 
-- session / control
-  - `status()`
-  - `ensure_ready()`
-  - `warm_remote_session()`
-  - `get_current_design()`
-  - `open_window()`
-  - `open_cell_view()`
-  - `save_current_cellview()`
-  - `close_current_cellview()`
-  - `download_file()`
-  - `run_shell_command()`
-- raw Virtuoso interaction
-  - `execute_skill()`
-  - `load_il()`
-  - `execute_operations()`
-- namespaces
-  - `client.layout.*`
-  - `client.schematic.*`
+- **Prefer Python API over raw SKILL** when a method exists (`client.layout.*`, `client.schematic.*`)
+- **Open the window** with `client.open_window(...)` so the user can see what you're doing
+- **Large edits**: split into chunks, open first with `mode="w"`, append with `mode="a"`
+- **Screenshot after layout work**: use `examples/01_virtuoso/basic/04_screenshot.py` pattern to verify visually
 
 ## References
 
-Read these only when needed. Load only the layout reference for layout work, and only the schematic reference for schematic work:
+Load only when needed:
 
-- layout-specific API, mosaic guidance, and examples:
-  - `references/layout.md`
-- reusable skill-local layout assets:
-  - `assets/cfmom_unary_cdac_reference.py`
-- metal pixel-art workflow for portraits / images drawn with metal layers:
-  - `references/metal_pixel_art.md`
-- process-node metal-rule notes for layout sizing / spacing questions:
-  - `references/t28_metal_rules.md`
-- CDAC / unit-cap usage guidance:
-  - `references/cdac.md`
-- schematic-specific API, terminal-aware helpers, and examples:
-  - `references/schematic.md`
-- bindkey-derived operation/API lookup:
-  - `references/bindkey_operation_index.md`
-  - raw archive: `references/raw_bindkeys.il`
-
-## Raw SKILL And IL
-
-Use raw SKILL only when there is no formal API yet.
-
-Preferred order:
-- add a formal builder in `src/virtuoso_bridge/virtuoso/schematic/ops.py`
-- or `src/virtuoso_bridge/virtuoso/layout/ops.py`
-- expose it through the matching editor/namespace layer
-- only then use it from examples or agent code
-
-If you must use IL:
-- prefer packaged files under `examples/01_virtuoso/assets/`
-- load them through `client.load_il(...)`
-- for repeated skill workflows, prefer a checked-in helper under `.agents/skills/virtuoso/assets/` instead of rebuilding the script from scratch each time
-
-## Large Layout Edit Guardrail
-
-Do not submit very large layout shape batches as one `execute_operations(...)` or one giant raw SKILL payload.
-
-Reason:
-- the bridge / Virtuoso execution path can truncate oversized payloads
-- the failure can show up as partial symbols such as `dbCreat...`
-- the resulting errors are misleading, for example `unbound variable` or malformed `dbCreateRect` bboxes
-
-Required pattern for large artwork, dense mosaics, or bulk rect/path generation:
-- split layout edits into smaller chunks
-- open the first chunk with `mode="w"` and later chunks with `mode="a"`
-- save after each chunk through the normal editor context manager
-- if a bulk edit fails with a truncated-looking symbol or impossible geometry error, suspect payload length first and reduce chunk size before debugging coordinates
-
-Default bias:
-- prefer conservative chunking for thousands of shapes
-- only increase chunk size after the smaller batch size is proven stable in the current bridge/session
-
-For very large generated layouts, prefer packaged `.il` helpers over giant inline SKILL strings.
-
-Recommended pattern:
-- put the generation loop in an `.il` file
-- load it with `client.load_il(...)`
-- call a short entry-point function with a small parameter list
-
-Do not:
-- send a giant one-shot raw SKILL string containing thousands of `dbCreate*` calls
-- assume `.il` automatically fixes the problem if the call site still passes an oversized payload
-
-The real guardrail is keeping each request payload small. `.il` is preferred because it lets Python send a short command while the heavy loop runs inside Virtuoso.
-
-## Screenshot Review Rule
-
-For layout work, screenshot review is mandatory.
-
-After every screenshot comes back, visually inspect the image before concluding the work is correct.
-
-Screenshot review is necessary but not sufficient.
-For any nontrivial routing edit, perform an explicit short-check before claiming success.
-
-Minimum short-check expectation:
-- identify the intended conductors and the conductors that must stay isolated
-- compare the new route geometry against the known landing metals or master-cell geometry
-- if available, use connectivity readback or net highlighting
-- if connectivity tooling is not available, do a bbox / overlap sanity check and state that this was a geometric short check, not extraction
-
-Minimum required checks:
-- any abnormal geometry
-- accidental shorts
-- route heads that only connect halfway
-- route heads that overshoot or stick out past the intended contact
-- elbows that are not full-width
-- floating labels
-- leftover shapes from previous attempts
-
-Do not rely only on coordinates, bbox dumps, or geometry text when judging routed layout quality.
-If the screenshot disagrees with the numeric reasoning, trust the screenshot and fix the geometry.
+- `references/layout.md` — layout API details and SKILL examples
+- `references/schematic.md` — schematic API details and examples
