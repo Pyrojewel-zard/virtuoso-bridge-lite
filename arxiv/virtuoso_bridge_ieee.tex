@@ -1,0 +1,185 @@
+\documentclass[lettersize,journal]{ieee_template/IEEEtran}
+\usepackage{amsmath,amsfonts}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{cite}
+
+\begin{document}
+
+\title{Virtuoso-Bridge: An Agent-Native Bridge for Harness Engineering in Analog and Mixed-Signal Workflows}
+
+\author{Zhishuai~Zhang, Xintian~Li, Nan~Sun, Lu~Jie%
+\thanks{All authors are with Tsinghua University.}%
+}
+
+\markboth{}%
+{Zhang: Virtuoso-Bridge}
+
+\maketitle
+
+\begin{abstract}
+Analog and mixed-signal (AMS) design automation is increasingly driven by coding agents, yet the gap between agent-side Python code and the Cadence Virtuoso environment remains difficult to bridge reliably. Both existing tools and Virtuoso-Bridge rely on the same native SKILL IPC mechanism, \texttt{ipcBeginProcess} and \texttt{evalstring}, a standard facility provided by the Cadence SKILL language itself. The contribution of this work is not a new execution mechanism, but a principled decomposition of the system boundary built around it. We decouple the SKILL execution client (VirtuosoClient) from the transport layer (SSHClient), yielding two independent modules. The first is a pure TCP client that sends SKILL and receives results with no awareness of SSH. The second manages tunnel lifecycle, remote daemon deployment, and file transfer. This separation enables transparent operation across local, LAN, VPN, and multi-hop SSH environments using the same client code. On top of this boundary, the system provides three programmability levels (raw SKILL, script injection, and Pythonic APIs), multimodal feedback including screenshots for visual verification, Spectre simulation integration with PSF parsing, and a skill-file system that teaches agents how to use the bridge without external documentation. The system has been verified in TSMC 28nm tape-out workflows~\cite{amsioagent} and is open-sourced at \texttt{github.com/Arcadia-1/virtuoso-bridge-lite}.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Agent-native tooling, analog design automation, Cadence Virtuoso, SKILL IPC, harness engineering, remote execution.
+\end{IEEEkeywords}
+
+%═══════════════════════════════════════════════════════════════════════
+\section{Introduction}
+%═══════════════════════════════════════════════════════════════════════
+\IEEEPARstart{T}{he} core mechanism for programmatic access to Cadence Virtuoso is well established. The SKILL language provides \texttt{ipcBeginProcess}, which spawns a child process inside the Virtuoso runtime and connects it through stdin/stdout pipes. The child process receives SKILL expressions, and Virtuoso evaluates them via \texttt{evalstring}. Results flow back through the same pipe. This is a standard Cadence IPC facility, not invented by any external project.
+
+Both the existing SkillBridge system~\cite{skillbridge} and the system presented here use exactly this mechanism. The SKILL-side code is nearly identical in both cases.
+
+\begin{verbatim}
+ipcBeginProcess("python daemon.py" ...
+  'dataHandler 'errHandler ...)
+
+procedure(dataHandler(ipcId data)
+  result = evalstring(data)
+  ipcWriteProcess(ipcId result)
+)
+\end{verbatim}
+
+The question is therefore not \emph{how} to execute SKILL from Python, since that is already solved, but rather \emph{what system boundary to build around it}. SkillBridge answers this by providing a transparent Pythonic RPC layer in which Python objects map to SKILL objects, function calls map to SKILL calls, and the user interacts as if writing SKILL in Python syntax. This is effective for interactive local exploration.
+
+Virtuoso-Bridge takes a different approach. It builds a \emph{harness}, a structured execution boundary that packages bridge lifecycle, remote transport, editing operations, and artifact return into a single project-local system. We use the term ``harness'' in the test-harness sense, referring to a reusable boundary that wraps the system under control and exposes it through a stable interface. The harness is designed for four properties that interactive RPC does not address. First, it provides transparent remote access through SSH tunnels. Second, it supports multi-level programmability from raw SKILL to high-level Python APIs. Third, it enables multimodal feedback including visual verification of layout and schematic edits. Fourth, it offers agent-native lifecycle management with persistent connections, skill files, and command logging.
+
+This work was motivated by our experience building AMS-IO-Agent~\cite{amsioagent}, an LLM-based agent for I/O ring design that was validated in a 28nm CMOS tape-out. In that project, the need for a stable, remote-capable bridge between the agent and Virtuoso became the central infrastructure challenge. Virtuoso-Bridge is the distilled and generalized result of that effort.
+
+%═══════════════════════════════════════════════════════════════════════
+\section{Architectural Principle}
+%═══════════════════════════════════════════════════════════════════════
+
+The central design principle is the separation of \emph{what to execute} from \emph{how to reach the execution environment}. This is realized through two independent modules.
+
+\textbf{VirtuosoClient} is a pure TCP client. It connects to \texttt{localhost:port}, sends SKILL code as a JSON payload, and receives results with binary framing using STX/NAK delimiters. It has no awareness of SSH, remote hosts, or file transfer, and works identically whether the TCP endpoint is a local daemon, an SSH-tunneled port, or a VPN connection.
+
+\textbf{SSHClient} is a tunnel and deployment manager. It establishes an SSH port forward, detects the remote Python version (2.7 or 3.x), uploads the appropriate daemon script, and manages file transfer. It is entirely optional and is not used in local mode.
+
+This decoupling has concrete consequences. VirtuosoClient can be tested without SSH infrastructure. Changing the transport from SSH to VPN or direct LAN requires no client code changes. The tunnel process is detached and survives across Python script invocations, enabling persistent connections for agent workflows. Port conflicts are resolved automatically by trying successive ports and writing the working port back to the configuration file.
+
+The communication protocol between VirtuosoClient and the daemon is deliberately simple. The client sends a JSON object containing the SKILL string and a timeout value over TCP. The daemon passes the SKILL string to Virtuoso via \texttt{evalstring}, then returns the result with binary framing. The byte \texttt{0x02} (STX) marks a successful result, \texttt{0x15} (NAK) marks an error, and \texttt{0x1E} (RS) terminates the response. The daemon is single-threaded by design, since Virtuoso itself is single-threaded, and serializing SKILL execution at the daemon level avoids concurrency hazards.
+
+The \texttt{core/} directory of the repository contains the entire bridge mechanism in 3 files totaling 180 lines, with no external dependencies. This minimal implementation serves as both documentation and a design principle. Users and agents can read and understand the full mechanism, then extend it from first principles rather than treating the system as an opaque dependency.
+
+\begin{figure}[!t]
+\centering
+% TODO: replace with hand-drawn architecture diagram
+\framebox[\columnwidth]{\parbox{0.9\columnwidth}{\centering\vspace{2.5cm}\textit{Architecture diagram placeholder}\\[6pt]\small Remote Mode: VirtuosoClient $\to$ TCP $\to$ SSH tunnel $\to$ RAMIC daemon $\to$ Virtuoso\\Local Mode: VirtuosoClient $\to$ TCP $\to$ RAMIC daemon $\to$ Virtuoso\vspace{2.5cm}}}
+\caption{Decoupled architecture. VirtuosoClient connects to a TCP endpoint without knowing whether it is local or tunneled. SSHClient (optional) creates the tunnel and deploys the daemon.}
+\label{fig:architecture}
+\end{figure}
+
+%═══════════════════════════════════════════════════════════════════════
+\section{Three Levels of Programmability}
+%═══════════════════════════════════════════════════════════════════════
+
+A single interaction granularity is insufficient for the range of tasks in AMS workflows. Virtuoso-Bridge provides three levels, and an agent can freely move between them depending on task requirements.
+
+\subsection{Level 1: Raw SKILL Execution}
+The method \texttt{client.execute\_skill()} sends an arbitrary SKILL expression to Virtuoso and returns the result. This is equivalent to typing into the CIW console. Batch execution via \texttt{execute\_operations} reduces round-trip overhead for sequences of commands.
+
+\subsection{Level 2: Script Injection}
+The method \texttt{client.load\_il()} uploads a SKILL file to the remote host and loads it into the running Virtuoso session. Complex logic runs inside Virtuoso at native speed, and Python only needs to issue function calls to entry points defined in the script. This is important for performance in remote environments where per-command latency is significant, and for reusing mature SKILL assets without rewriting them as Python API calls.
+
+\subsection{Level 3: Pythonic APIs}
+Context-managed editors abstract common editing patterns.
+
+\begin{verbatim}
+with client.layout.edit(lib, cell) as layout:
+    layout.add_rect("M1", "drawing", bbox)
+    layout.add_via("M1_M2", (x, y))
+\end{verbatim}
+
+The editor translates these calls into SKILL, handles open/save/close, and provides error propagation. Similar APIs exist for schematic editing and Spectre simulation. This level is most suitable for AI agents because it reduces the SKILL knowledge required to generate correct code, thereby lowering the hallucination probability of LLM-generated commands.
+
+The three levels are not exclusive. When a high-level API is missing, an agent can drop to Level~1 or Level~2 without leaving the same bridge session. In remote high-latency environments, Level~2 avoids the per-command overhead of Level~1 while retaining full SKILL expressiveness.
+
+%═══════════════════════════════════════════════════════════════════════
+\section{Multimodal Feedback}
+%═══════════════════════════════════════════════════════════════════════
+
+An agent operating in an EDA environment cannot rely solely on textual return values. Layout correctness, schematic topology, and waveform shapes are inherently visual. Virtuoso-Bridge provides several multimodal return paths to address this limitation.
+
+\paragraph{Screenshot capture and retrieval.} The bridge supports capturing screenshots of the current Virtuoso window via SKILL, transferring the image file to the local machine through the SSH tunnel, and returning it to the agent. When combined with a vision-language model (VLM), this enables visual verification of edits. The agent issues a layout command, captures a screenshot, inspects the image, and decides whether the geometry is correct before proceeding. In practice, this visual feedback loop was found to be essential, since coordinate-based reasoning alone frequently produces false confidence in routing correctness.
+
+\paragraph{Simulation data.} Spectre simulation results are parsed from PSF ASCII format into Python data structures, supporting both real-valued (transient, DC) and complex-valued (AC) waveforms. The agent can inspect waveform data programmatically, compute derived metrics such as capacitance from AC current or the $f_\mathrm{3dB}$ from a frequency response, and make optimization decisions without manual intervention.
+
+\paragraph{File transfer.} Arbitrary files can be uploaded to or downloaded from the remote Virtuoso host through the SSH tunnel. This supports workflows such as netlist export, result archival, and exchange of intermediate artifacts between agent rounds.
+
+\paragraph{Command logging.} All SSH and SKILL commands are logged with timestamps to a persistent log file. This provides full traceability for debugging agent-driven workflows and enables post-hoc analysis of agent behavior.
+
+These return paths collectively enable closed-loop iteration, in which the agent issues a command, observes the result through the appropriate modality, reasons about whether the outcome is correct, and corrects if necessary.
+
+%═══════════════════════════════════════════════════════════════════════
+\section{Agent-Native Design}
+%═══════════════════════════════════════════════════════════════════════
+
+An agent-native system differs from a conventional API in that it must support autonomous, repeated tool use without human setup at each round. Virtuoso-Bridge addresses this through several design choices.
+
+\paragraph{CLI-first lifecycle.} The bridge is managed through the commands \texttt{virtuoso-bridge start}, \texttt{status}, \texttt{restart}, and \texttt{stop}. Agents invoke these commands without GUI interaction. The \texttt{status} command checks tunnel health, daemon responsiveness, remote hostname verification, and Spectre license availability in a single call.
+
+\paragraph{Skill files.} The \texttt{skills/} directory contains structured documents covering the virtuoso, spectre, and optimizer workflows. An agent reads the relevant skill file and immediately knows which APIs to call, what the workflow looks like, and what pitfalls to avoid. This is more reliable than extracting usage patterns from source code or docstrings, and reduces the prompt engineering burden on the user.
+
+\paragraph{Persistent tunnel.} The SSH tunnel process is detached from the parent Python process and survives across script invocations. Tunnel state, including PID, port, and remote host, is persisted to a JSON file and reused by subsequent connections. This eliminates the repeated setup cost that would otherwise dominate high-frequency agent interaction. On Windows, platform-specific process detachment flags are used to ensure tunnel stability.
+
+\paragraph{Runnable examples.} The repository includes over 30 runnable examples covering layout editing, schematic creation, CDL export, and Spectre simulation including transient, DC+AC, and PSS+Pnoise analyses. These serve as both documentation and few-shot references for agents. Most examples require only \texttt{analogLib} and run without a specific PDK, enabling immediate prototyping.
+
+%═══════════════════════════════════════════════════════════════════════
+\section{Simulation Integration}
+%═══════════════════════════════════════════════════════════════════════
+
+Spectre simulation is integrated as a first-class capability.
+
+\begin{verbatim}
+sim = SpectreSimulator.from_env(work_dir="./out")
+result = sim.run_simulation("tb.scs", {})
+\end{verbatim}
+
+The system automatically sources the Cadence environment on the remote host, uploads netlists and include files including Verilog-A modules, executes Spectre, downloads PSF results, and parses them into Python data structures. Multiple simulation modes are supported, including basic Spectre, APS, and Spectre~X.
+
+License availability is checked via the \texttt{status} command, which queries \texttt{lmstat} on the remote host and reports feature usage. This prevents agents from submitting simulations that would wait indefinitely for unavailable licenses, a failure mode that is silent and difficult to diagnose without explicit checking.
+
+%═══════════════════════════════════════════════════════════════════════
+\section{Comparison with SkillBridge}
+%═══════════════════════════════════════════════════════════════════════
+
+\input{tables/comparison.tex}
+
+Both systems use the same three SKILL calls, namely \texttt{ipcBeginProcess}, \texttt{evalstring}, and \texttt{ipcWriteProcess}. The SKILL-side code differs only in framing conventions, with one using binary delimiters and the other using text prefixes. The divergence is entirely in what is built on top of this shared foundation.
+
+SkillBridge provides transparent Python-to-SKILL type mapping, IDE tab completion, and an interactive programming model optimized for human exploration. These are genuine strengths for local, interactive use.
+
+Virtuoso-Bridge provides SSH remote access, script injection, structured layout and schematic APIs, Spectre simulation integration, multimodal feedback, and agent-native lifecycle management. These capabilities are designed for automated, remote, high-frequency workflows driven by coding agents.
+
+The two systems are complementary rather than competitive. They address different use cases built on the same underlying mechanism.
+
+%═══════════════════════════════════════════════════════════════════════
+\section{Verification}
+%═══════════════════════════════════════════════════════════════════════
+
+The system has been verified in a TSMC 28nm tape-out workflow. The complete version of the harness, from which virtuoso-bridge-lite is distilled, was used in the development of AMS-IO-Agent~\cite{amsioagent}, where an LLM-based agent autonomously completed I/O ring design tasks with outputs directly used in silicon fabrication. That work demonstrated the practical necessity of a stable, remote-capable bridge for agent-driven AMS design.
+
+The open-source version removes all process-specific paths and credentials while preserving the core bridge capability. It supports both remote operation with SSH and jump hosts and local operation, and has been verified across macOS, Windows, and Linux.
+
+%═══════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+%═══════════════════════════════════════════════════════════════════════
+
+The contribution of Virtuoso-Bridge is not a new execution mechanism. The underlying SKILL IPC facility is standard Cadence infrastructure. The contribution is a principled system boundary built around it, comprising decoupled transport and execution layers, three levels of programmability, multimodal feedback for visual verification, and agent-native lifecycle management. This boundary makes it practical to use Virtuoso as a tool-use target for coding agents in remote AMS design environments, as demonstrated in a 28nm tape-out workflow.
+
+\begin{thebibliography}{2}
+
+\bibitem{skillbridge}
+N.~Buwen and T.~Markus, ``SkillBridge,'' GitHub repository. [Online]. Available: \texttt{https://github.com/unihd-cag/skillbridge}
+
+\bibitem{amsioagent}
+Z.~Zhang, X.~Li, S.~Liu, A.~Zhang, L.~Jie, and N.~Sun, ``AMS-IO-Bench and AMS-IO-Agent: Benchmarking and structured reasoning for analog and mixed-signal integrated circuit input/output design,'' in \emph{Proc. AAAI Conf. Artificial Intelligence}, vol.~40, no.~2, pp.~1579--1586, Mar. 2026.
+
+\end{thebibliography}
+
+\end{document}

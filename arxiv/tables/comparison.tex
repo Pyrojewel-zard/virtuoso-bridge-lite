@@ -1,0 +1,21 @@
+\begin{table*}[!t]
+\caption{Comparison of Virtuoso-Bridge and SkillBridge}
+\label{tab:comparison_ieee}
+\centering
+\small
+\begin{tabular}{p{0.16\textwidth}p{0.35\textwidth}p{0.35\textwidth}}
+\toprule
+Aspect & SkillBridge & Virtuoso-Bridge \\
+\midrule
+Core mechanism & \texttt{ipcBeginProcess} + \texttt{evalstring} & \texttt{ipcBeginProcess} + \texttt{evalstring} \\
+Design goal & Pythonic RPC for interactive local use & Agent-native harness for remote automation \\
+Architecture & Single layer: Python client $\to$ Virtuoso server & Two decoupled layers: VirtuosoClient (TCP) + SSHClient (transport) \\
+Remote support & Local only (Unix socket or TCP on localhost) & SSH tunnel with jump host, persistent connection, auto port retry \\
+Programmability & One level: Python-to-SKILL function mapping & Three levels: raw SKILL, script injection, Pythonic APIs \\
+Simulation & Not integrated & Spectre runner + PSF parser (real and complex data) \\
+Agent support & Not designed for agents & Skill files, CLI lifecycle, persistent tunnel, command logging \\
+Type mapping & Automatic bidirectional (Python $\leftrightarrow$ SKILL objects) & String-based \\
+IDE support & Tab completion, PyCharm stubs & Not provided (not needed by agents) \\
+\bottomrule
+\end{tabular}
+\end{table*}

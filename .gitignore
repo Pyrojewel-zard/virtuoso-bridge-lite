@@ -8,7 +8,10 @@ build/
 output/
 logs/
 skillbridge/
-arxiv/
+arxiv/*.aux
+arxiv/*.log
+arxiv/*.pdf
+arxiv/preview/
 optimization/
 cdl_gen/
 reference/
