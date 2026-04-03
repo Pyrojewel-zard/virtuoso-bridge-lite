@@ -134,6 +134,22 @@ def cli_start() -> int:
     print(f"tunnel.warm = {_fmt(elapsed)}")
     ssh.close()  # close SSH runner, tunnel process stays alive (detached)
 
+    # Post-start health check: verify tunnel is still alive after a brief delay
+    time.sleep(1.0)
+    if not SSHClient.is_running():
+        print("[warning] Tunnel process exited shortly after start.")
+        print("Try starting the tunnel manually:")
+        ssh_env = remote_ssh_env_from_os()
+        port = ssh.port
+        manual_cmd = f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -N -L {port}:127.0.0.1:{port}"
+        if ssh_env.jump_host:
+            jump = f"{ssh_env.jump_user or ssh_env.remote_user}@{ssh_env.jump_host}" if (ssh_env.jump_user or ssh_env.remote_user) else ssh_env.jump_host
+            manual_cmd += f" -J {jump}"
+        target = f"{ssh_env.remote_user}@{ssh_env.remote_host}" if ssh_env.remote_user else ssh_env.remote_host
+        manual_cmd += f" {target}"
+        print(f"  {manual_cmd}")
+        return 1
+
     return _print_status()
 
 

@@ -315,23 +315,42 @@ class SSHClient:
 
         logger.info("Starting SSH tunnel: %s", " ".join(cmd))
         print(f"[cmd] {' '.join(cmd)}", flush=True)
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            start_new_session=True,  # detach: tunnel survives parent process
-        )
 
-        deadline = time.monotonic() + _TUNNEL_STARTUP_SETTLE_SECONDS
+        # Platform-specific detach: tunnel must survive parent process exit
+        popen_kwargs: dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            # Windows: DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP
+            popen_kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+            )
+            # stderr must NOT be PIPE on Windows — pipe breaks when parent exits
+            popen_kwargs["stderr"] = subprocess.DEVNULL
+        else:
+            popen_kwargs["start_new_session"] = True
+            popen_kwargs["stderr"] = subprocess.PIPE
+
+        proc = subprocess.Popen(cmd, **popen_kwargs)
+
+        # Wait for tunnel to settle (longer for jump-host paths)
+        settle = _TUNNEL_STARTUP_SETTLE_SECONDS
+        if self._jump_host:
+            settle = max(settle, 3.0)
+        deadline = time.monotonic() + settle
         while time.monotonic() < deadline:
             if proc.poll() is not None:
                 break
-            time.sleep(0.05)
+            time.sleep(0.1)
 
         if proc.poll() is not None:
-            stderr = proc.stderr
-            err_msg = stderr.read().decode("utf-8", errors="ignore") if stderr else ""
+            err_msg = ""
+            if proc.stderr and proc.stderr.readable():
+                try:
+                    err_msg = proc.stderr.read().decode("utf-8", errors="ignore")
+                except (OSError, ValueError):
+                    pass
             if "address already in use" in err_msg.lower() and self._can_reach_port(port):
                 logger.info("Reusing existing tunnel at localhost:%d", port)
                 self._using_external_tunnel = True
@@ -467,26 +486,26 @@ class SSHClient:
 
     @classmethod
     def is_running(cls) -> bool:
-        """Check if a tunnel is running (process alive + port reachable)."""
+        """Check if a tunnel is running (port reachable or process alive)."""
         state = cls.read_state()
         if not state:
             return False
-        pid = state.get("tunnel_pid")
         port = state.get("port")
-        # Check process alive
-        if pid:
-            try:
-                os.kill(pid, 0)
-                return True
-            except OSError:
-                pass
-        # Fallback: check port reachable
+        pid = state.get("tunnel_pid")
+        # Primary check: is the port reachable? (works on all platforms)
         if port:
             try:
                 s = socket.create_connection(("127.0.0.1", port), timeout=1)
                 s.close()
                 return True
             except (ConnectionRefusedError, OSError):
+                pass
+        # Fallback: is the process alive? (os.kill(pid, 0) on Unix)
+        if pid:
+            try:
+                os.kill(pid, 0)
+                return True
+            except (OSError, PermissionError):
                 pass
         return False
 

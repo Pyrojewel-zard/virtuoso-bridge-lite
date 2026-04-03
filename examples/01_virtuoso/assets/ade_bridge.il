@@ -65,17 +65,22 @@ procedure(adeBridgeSetVar(varName varValue)
   )
 )
 
-; --- Run simulation via sevRun (ADE Explorer) ---
+; --- Run simulation (auto-detects Explorer vs Assembler) ---
 procedure(adeBridgeRunSim()
-  let((adeWin session)
+  let((adeWin name session)
     adeWin = adeBridgeFindAdeWindow()
     if(adeWin then
-      session = sevSession(adeWin)
-      if(session then
-        sevRun(session)
+      name = hiGetWindowName(adeWin)
+      if(rexMatchp("Assembler" name) then
+        maeRunSimulation()
       else
-        printf("[adeBridge] sevSession returned nil for %s\n" hiGetWindowName(adeWin))
-        nil
+        session = sevSession(adeWin)
+        if(session then
+          sevRun(session)
+        else
+          printf("[adeBridge] sevSession returned nil for %s\n" name)
+          nil
+        )
       )
     else
       printf("[adeBridge] no ADE Explorer/Assembler window found\n")
