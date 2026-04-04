@@ -130,3 +130,35 @@ Load only when needed:
 - `references/schematic.md` — schematic API details and examples
 - `references/ade.md` — ADE control, simulation triggering, OCEAN result reading
 - `references/netlist.md` — CDL/Spectre netlist formats, spiceIn import, netlist export
+
+## Existing examples
+
+**Always check these before writing new code.** If similar functionality exists, use it as a basis.
+
+### `examples/01_virtuoso/basic/`
+- `01_execute_skill.py` — run arbitrary SKILL expressions
+- `02_load_il.py` — upload and load .il files
+- `03_list_library_cells.py` — list libraries and cells
+- `04_screenshot.py` — capture layout/schematic screenshots
+
+### `examples/01_virtuoso/schematic/`
+- `01a_create_rc_stepwise.py` — create RC schematic via operations
+- `01b_create_rc_load_skill.py` — create RC schematic via .il script
+- `02_read_connectivity.py` — read instance connections and nets
+- `03_read_instance_params.py` — read CDF instance parameters
+- `05_rename_instance.py` — rename schematic instances
+- `06_delete_instance.py` — delete instances
+- `07_delete_cell.py` — delete cells from library
+- `08_import_cdl_cap_array.py` — import CDL netlist via spiceIn (SSH)
+
+### `examples/01_virtuoso/layout/`
+- `01_create_layout.py` — create layout with rects, paths, instances
+- `02_add_polygon.py` — add polygons
+- `03_add_via.py` — add vias
+- `04_multilayer_routing.py` — multi-layer routing
+- `05_bus_routing.py` — bus routing
+- `06_read_layout.py` — read layout shapes
+- `07–10` — delete/clear operations
+
+### `examples/01_virtuoso/ade/`
+- `01_rc_filter_sweep.py` — full Maestro workflow: create schematic, AC analysis, parametric sweep, bandwidth spec, display results
