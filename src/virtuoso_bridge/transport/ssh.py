@@ -133,6 +133,11 @@ class SSHRunner:
         self._ssh_cmd = ssh_cmd or shutil.which("ssh") or "ssh"
         self._tar_cmd = shutil.which("tar") or "tar"
 
+        # ControlMaster socket path for SSH connection multiplexing.
+        # All ssh/scp calls to the same host reuse one TCP connection.
+        _user_part = user or "default"
+        self._control_path = f"/tmp/vb_ssh_{_user_part}@{host}:{jump_host or 'direct'}"
+
         self._shell_proc: subprocess.Popen[bytes] | None = None
         self._shell_queue: queue.Queue[str | None] | None = None
         self._shell_reader: threading.Thread | None = None
@@ -374,23 +379,8 @@ class SSHRunner:
             return self._download_via_tar(remote_path, local_path, timeout=effective_timeout)
 
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd = [self._ssh_cmd.replace("ssh", "scp") if self._ssh_cmd.endswith("ssh") else (shutil.which("scp") or "scp")]
-        cmd += [
-            "-o", "BatchMode=yes",
-            "-o", "StrictHostKeyChecking=no",
-            "-o", f"ConnectTimeout={self._connect_timeout}",
-        ]
-        if self._ssh_config_path:
-            cmd += ["-F", str(self._ssh_config_path)]
-        if self._ssh_key_path:
-            cmd += ["-i", str(self._ssh_key_path)]
-        if self._jump_host:
-            jump_target = (
-                f"{self._jump_user}@{self._jump_host}"
-                if self._jump_user
-                else self._jump_host
-            )
-            cmd += ["-J", jump_target]
+        scp_bin = self._ssh_cmd.replace("ssh", "scp") if self._ssh_cmd.endswith("ssh") else (shutil.which("scp") or "scp")
+        cmd = [scp_bin] + self._common_ssh_options()
         cmd += [self._remote_scp_target(remote_path), str(local_path)]
         self._print_cmd(cmd)
         logger.debug("Downloading via scp %s:%s -> %s", self._host, remote_path, local_path)
@@ -823,24 +813,32 @@ class SSHRunner:
         self._shell_queue = None
         self._shell_reader = None
 
-    def _build_ssh_base(self) -> list[str]:
-        cmd: list[str] = [self._ssh_cmd]
-        cmd += [
+    def _common_ssh_options(self) -> list[str]:
+        """SSH options shared by both ssh and scp commands."""
+        opts: list[str] = [
             "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=no",
             "-o", f"ConnectTimeout={self._connect_timeout}",
+            "-o", "ControlMaster=auto",
+            "-o", f"ControlPath={self._control_path}",
+            "-o", "ControlPersist=300",
         ]
         if self._ssh_config_path:
-            cmd += ["-F", str(self._ssh_config_path)]
+            opts += ["-F", str(self._ssh_config_path)]
         if self._ssh_key_path:
-            cmd += ["-i", str(self._ssh_key_path)]
+            opts += ["-i", str(self._ssh_key_path)]
         if self._jump_host:
             jump_target = (
                 f"{self._jump_user}@{self._jump_host}"
                 if self._jump_user
                 else self._jump_host
             )
-            cmd += ["-J", jump_target]
+            opts += ["-J", jump_target]
+        return opts
+
+    def _build_ssh_base(self) -> list[str]:
+        cmd: list[str] = [self._ssh_cmd]
+        cmd += self._common_ssh_options()
         if self._user:
             cmd += [f"{self._user}@{self._host}"]
         else:

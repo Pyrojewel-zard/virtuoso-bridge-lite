@@ -1,5 +1,20 @@
 # ADE Reference
 
+## Table of Contents
+
+1. [Supported ADE Types](#supported-ade-types)
+2. [Design Variables](#design-variables)
+3. [Maestro mae* API](#maestro-mae-api-ic618--ic231) — session management, reading setup, creating tests, analysis config, outputs, variables, corners, env options, save, run, read results, history display, utilities
+4. [Known Blockers](#known-blockers) — GUI dialogs, schematic check, edit locks
+5. [Pnoise Jitter Event — Automation Limitation](#pnoise-jitter-event--automation-limitation)
+6. [Reading Results — OCEAN API](#reading-results--ocean-api)
+7. [OCEAN Quick Reference](#ocean-quick-reference)
+8. [Complete Maestro Workflow (Python)](#complete-maestro-workflow-python)
+9. [Maestro SKILL Utilities](#maestro-skill-utilities)
+10. [Examples](#examples)
+
+---
+
 ## Supported ADE Types
 
 | Type | Run function | Session access |
@@ -38,6 +53,45 @@ ses = maeOpenSetup("myLib" "myCell" "maestro" ?mode "a")
 ```
 
 **`?session` is a string.** Pass it as `?session "fnxSession4"`, not as an unquoted variable.
+
+### Reading Existing Setup
+
+Read the full configuration of an open Maestro session. **Must open GUI first** via `deOpenCellView`, then call `maeGetSetup()` without `?typeName` to get the test list.
+
+```scheme
+; Test list
+maeGetSetup()                              ; => ("tb_cmp_SA")
+
+; Enabled analyses for a test
+maeGetEnabledAnalysis("tb_cmp_SA")         ; => ("pss" "pnoise")
+
+; Analysis parameters (returns all option key-value pairs)
+maeGetAnalysis("tb_cmp_SA" "pss")
+; => (("fund" "1G") ("harms" "10") ("errpreset" "conservative") ...)
+
+maeGetAnalysis("tb_cmp_SA" "pnoise")
+; => (("fund" "1G") ("start" "0") ("stop" "500M") ...)
+
+; Design variables (use asi* API, not maeGetSetup)
+asiGetDesignVarList(asiGetCurrentSession())
+; => (("VDD" "0.81:0.09:0.99") ("Vcm" "0.475") ...)
+
+; Outputs — returns sevOutputStruct list, iterate with nth/~>name
+maeGetTestOutputs("tb_cmp_SA")
+; Access: nth(0 outputs)~>name, ~>outputType, ~>signalName, ~>expr
+
+; Simulator name
+maeGetEnvOption("tb_cmp_SA" ?option "simExecName")  ; => "spectre"
+
+; Model files
+maeGetEnvOption("tb_cmp_SA" ?option "modelFiles")
+; => (("/path/to/model.scs" "tt") ("/path/to/model.scs" "ss") ...)
+
+; Run mode
+maeGetCurrentRunMode()  ; => "Single Run, Sweeps and Corners"
+```
+
+**Note:** `maeGetSetup(?typeName "globalVar")` may return nil even when variables exist. Use `asiGetDesignVarList(asiGetCurrentSession())` instead to reliably read design variables.
 
 ### Creating Tests
 
@@ -110,14 +164,83 @@ maeSetVar("c_val" "1p,100f" ?session "fnxSession4")
 
 ### Corners
 
-```scheme
-; Create corner and disable it for specific tests
-maeSetCorner("myCorner" ?disableTests `("AC" "TRAN"))
+Corner management has limited SKILL API support. `maeSetCorner` can only create/enable/disable corners. Model files and variables must be set by editing `maestro.sdb` XML directly.
 
-; Set per-corner variable values (space-separated)
-maeSetVar("vdd" "1.2 1.4" ?typeName "corner" ?typeValue '("myCorner"))
-maeSetVar("temperature" "50 100" ?typeName "corner" ?typeValue '("myCorner"))
+#### Read corners
+
+Corners are stored in `maestro.sdb` XML. Download and parse:
+
+```python
+client.download_file(f'{maestro_dir}/maestro.sdb', '/tmp/maestro.sdb')
+# Parse <corner enabled="1">name ... </corner> blocks
+# Each corner has: <vars>, <models> sub-elements
 ```
+
+#### Create corner (empty)
+
+```scheme
+; Creates corner with no model/var — only ?enabled is supported
+maeSetCorner("tt_25" ?enabled t)
+```
+
+#### Create corner with model + temperature
+
+Full corners (with model file and variables) require editing `maestro.sdb` XML. Close the maestro session first, then insert a corner XML block before `</corners>`:
+
+```xml
+<corner enabled="1">tt_25
+    <vars>
+        <var>temperature
+            <value>25</value>
+        </var>
+    </vars>
+    <models>
+        <model enabled="1">toplevel_modified.scs
+            <modeltest>All</modeltest>
+            <modelblock>Global</modelblock>
+            <modelfile>/home/zhangz/T28/toplevel_modified.scs</modelfile>
+            <modelsection>"top_tt"</modelsection>
+        </model>
+    </models>
+</corner>
+```
+
+Python helper to insert corners (runs on remote via `upload_file` + `run_shell_command`):
+
+```python
+# 1. Close maestro session
+client.execute_skill('MaestroClose("myLib" "myCell")')
+
+# 2. Edit sdb on remote (python2 script uploaded and executed)
+# Insert new corner XML blocks before first </corners> tag
+# See edit_sdb.py pattern: read lines, insert before </corners>, write back
+
+# 3. Reopen maestro to load changes
+client.execute_skill('MaestroOpen("myLib" "myCell")')
+```
+
+#### Enable / Disable corner
+
+```scheme
+maeSetCorner("tt_25" ?enabled t)    ; enable
+maeSetCorner("tt_25" ?enabled nil)  ; disable
+```
+
+#### Delete corner
+
+```scheme
+maeDeleteCorner("tt_25")
+maeSaveSetup()  ; persist deletion
+```
+
+**Note:** `maeDeleteCorner` works in memory. `maeSaveSetup` persists to sdb. If the corner was inserted by direct sdb edit without reopening maestro first, the deletion may not take effect — always reopen maestro after sdb edits before using mae* functions.
+
+#### Explored but unsupported keywords
+
+`maeSetCorner` only accepts `?enabled`. These keywords do NOT work:
+`?temperature`, `?model`, `?modelFile`, `?modelSection`, `?vars`, `?models`, `?varList`, `?file`, `?section`, `?copy`, `?copyFrom`
+
+`maeLoadCorners(filepath)` accepts a file path but does not import corners in practice (returns nil silently).
 
 ### Environment Options (Model Files)
 
@@ -212,9 +335,9 @@ client.execute_skill(f'maeSaveSetup(?lib "{lib}" ?cell "{cell}" ?view "maestro")
 Key points:
 - **Edit mode is exclusive** — only one session can have a cellview in edit mode. Must close all existing sessions first via `maeCloseSession(?forceClose t)`.
 - `deOpenCellView` opens the GUI window (read mode initially).
-- `maeMakeEditable()` switches to edit mode (required before restoring).
+- `maeMakeEditable()` switches to edit mode — **call immediately after opening**, before any modifications. Otherwise closing the window triggers a "save changes?" dialog that deadlocks the SKILL channel (read-only can't save, dialog blocks everything).
 - `maeRestoreHistory("Interactive.N")` sets the history as active setup, making results visible in the GUI.
-- `maeSaveSetup` persists the state.
+- `maeSaveSetup` persists the state — **always save before closing**.
 - History names are **not always** `Interactive.N` — they can be renamed by the user.
 
 ### Utility
@@ -231,29 +354,68 @@ maeMigrateADELStateToMaestro("myLib" "myCell" "spectre_state1")
 maeMigrateADEXLToMaestro("myLib" "myCell" "adexl" ?maestroView "maestro_convert")
 ```
 
-## CDF Parameter Setting
-
-The Python schematic API doesn't support CDF parameters. Set them via SKILL after creating the schematic:
-
-```python
-# Open cellview for editing
-client.execute_skill(f'_cv = dbOpenCellViewByType("{lib}" "{cell}" "schematic" nil "a")')
-
-# Set a CDF parameter
-client.execute_skill(
-    'cdfFindParamByName(cdfGetInstCDF('
-    'car(setof(i _cv~>instances i~>name == "R0")))'
-    ' "r")~>value = "1k"'
-)
-
-client.execute_skill('dbSave(_cv)')
-```
-
 ## Known Blockers
 
-- **GUI dialogs** block the SKILL execution channel. All `execute_skill()` calls timeout until the dialog is dismissed manually. Common culprits: "Specify history name", "No analyses enabled".
-- **Schematic must be checked & saved** before simulation, otherwise netlisting fails.
+- **GUI dialogs** block the SKILL execution channel. All `execute_skill()` calls timeout until the dialog is dismissed manually. Common culprits: "Specify history name", "No analyses enabled", "Change Mode Confirmation". Use `hiFormDone(hiGetCurrentForm())` to dismiss programmatically.
+- **Schematic must be checked & saved** (`schCheck` + `dbSave`) before simulation, otherwise netlisting fails with dialog.
 - **Schematic should be open in GUI** for Maestro to reference it correctly.
+- **`maeOpenSetup` creates background edit locks** — always pair with `maeCloseSession(?forceClose t)`. Stale `.cdslck` files may need manual deletion.
+
+## Pnoise Jitter Event — Automation Limitation
+
+The pnoise "jitter event" table (the Add/Delete buttons in Choosing Analyses → pnoise) **cannot be fully automated via SKILL API alone**. The Add button's internal function `_spectreRFAddJitterEvent` exists but requires Qt widget state that `asiSetAnalysisFieldVal` cannot set.
+
+### What works
+
+Setting pnoise analysis parameters (frequency range, method, trigger nodes) works via:
+```python
+client.execute_skill(f'maeSetAnalysis("{test}" "pnoise" ?enable t ?options `(...) ?session "{ses}")')
+```
+
+**Note:** `maeGetAnalysis` and `maeSetAnalysis` work without `hiSetCurrentWindow`. They operate on the current active maestro session directly. Both backtick syntax `` `(("key" "val")) `` and `list(list("key" "val"))` work for the `?options` argument.
+
+The `measTableData` field can be set in memory and persisted to sdb:
+```python
+# Set in memory
+client.execute_skill('asiSetAnalysisFieldVal(_pnAna "measTableData" \'("1;Edge Crossing;voltage;/X_DUT/LP;/X_DUT/LM;-;50m;1;rise;-;...")')
+# Open form + apply to persist
+client.execute_skill('asiDisplayAnalysis(asiGetCurrentSession() "pnoise")')
+client.execute_skill('hiFormApply(hiGetCurrentForm())')
+client.execute_skill('hiFormDone(hiGetCurrentForm())')
+client.execute_skill(f'maeSaveSetup(...)')
+```
+
+### What does NOT work
+
+- `_spectreRFAddJitterEvent(asiGetCurrentAnalysisForm() 'pnoise "")` — the function exists but does not read form field values set via `->value =` (Qt widget not synced)
+- Setting `measTableData` via `asiSetAnalysisFieldVal` alone without form Apply — data stays in memory but is not written to sdb
+
+### Current best workaround
+
+Copy `active.state` from a reference maestro and replace instance paths:
+```python
+# active.state is XML — jitter events stored here, not in maestro.sdb
+ssh(f"cp {src_maestro}/active.state {dst_maestro}/active.state")
+ssh(f"sed -i 's|/I4/|/X_DUT/|g' {dst_maestro}/active.state")
+```
+Then close and reopen the maestro to load from `active.state`.
+
+### Explored but failed approaches
+
+| Approach | Result |
+|----------|--------|
+| `_spectreRFAddJitterEvent` | Function exists, returns nil, table stays empty |
+| `asiSetAnalysisFieldVal("measTableData" ...)` alone | Memory updated but not persisted |
+| `asiSetAnalysisFieldVal` + `hiFormApply` | Persisted to sdb but GUI table may not display |
+| `maeSetAnalysis` with measTableData option | Memory updated but not persisted |
+| Form field `->value =` + `_spectreRFAddJitterEvent` | Qt widget not synced from SKILL |
+| `_spectreRFDeleteJitterEvent` | **Works** — can delete existing events |
+
+### Key files
+
+- `maestro/active.state` — XML file containing jitter event data (NOT in `maestro.sdb`)
+- `maestro/maestro.sdb` — XML file containing maestro setup (tests, analyses, outputs, variables)
+- Both are text-based XML and can be edited with `sed`
 
 ## Reading Results — OCEAN API
 
@@ -317,18 +479,40 @@ client.execute_skill(
     f'?signalName "/OUT" ?session "{ses}")')
 client.execute_skill(f'maeSetVar("c_val" "1p,100f" ?session "{ses}")')
 
-# 5. Save + run (synchronous)
+# 5. Save + run (async — never use ?waitUntilDone t, it blocks the event loop)
 client.execute_skill(
     f'maeSaveSetup(?lib "{lib}" ?cell "{cell}" '
     f'?view "maestro" ?session "{ses}")')
-r = client.execute_skill(
-    f'maeRunSimulation(?waitUntilDone t ?session "{ses}")', timeout=300)
+client.execute_skill(f'maeRunSimulation(?session "{ses}")')
+client.execute_skill("maeWaitUntilDone('All)", timeout=300)
 
 # 6. Export results
 client.execute_skill(
     'maeExportOutputView(?fileName "/tmp/results.csv" ?view "Detail")')
 client.download_file('/tmp/results.csv', 'output/results.csv')
 ```
+
+## Maestro SKILL Utilities
+
+`examples/01_virtuoso/assets/maestro_utils.il` provides helper procedures:
+
+```python
+client.load_il("examples/01_virtuoso/assets/maestro_utils.il")
+
+# Open maestro (reuses existing window, makes editable)
+ses = client.execute_skill(f'MaestroOpen("{lib}" "{cell}")').output.strip('"')
+
+# Close cleanly (saves first to avoid "save changes?" dialog)
+client.execute_skill(f'MaestroClose("{lib}" "{cell}")')
+
+# Close all maestro windows
+client.execute_skill('MaestroCloseAll()')
+```
+
+Key behaviors:
+- `MaestroOpen` checks for existing windows first — never opens a duplicate
+- `MaestroOpen` does NOT close other cells' sessions (avoids cross-cell deadlocks)
+- `MaestroClose` saves before closing (prevents "save changes?" blocking dialog)
 
 ## Examples
 

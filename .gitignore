@@ -21,6 +21,5 @@ arxiv/*.toc
 arxiv/preview/
 texput.log
 optimization/
-cdl_gen/
 reference/
 .vscode/
