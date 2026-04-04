@@ -80,11 +80,16 @@ class RemoteSshEnv(NamedTuple):
     jump_host: str | None
     jump_user: str | None
 
-def remote_ssh_env_from_os() -> RemoteSshEnv:
-    """Read remote SSH target from environment variables."""
+def remote_ssh_env_from_os(profile: str | None = None) -> RemoteSshEnv:
+    """Read remote SSH target from environment variables.
+
+    If *profile* is given (e.g. ``"gpu1"``), reads ``VB_REMOTE_HOST_GPU1``
+    etc.  Otherwise reads the default unsuffixed variables.
+    """
+    suffix = f"_{profile}" if profile else ""
 
     def _strip(name: str) -> str | None:
-        raw = os.environ.get(name)
+        raw = os.environ.get(f"{name}{suffix}")
         if raw is None:
             return None
         s = raw.strip()

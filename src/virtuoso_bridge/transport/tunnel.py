@@ -24,7 +24,11 @@ logger = logging.getLogger(__name__)
 
 _TUNNEL_STARTUP_SETTLE_SECONDS = 1.0
 _STATE_DIR = Path.home() / ".cache" / "virtuoso_bridge"
-_STATE_FILE = _STATE_DIR / "state.json"
+
+
+def _state_file(profile: str | None = None) -> Path:
+    name = f"state_{profile}.json" if profile else "state.json"
+    return _STATE_DIR / name
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +128,7 @@ class SSHClient:
         jump_user: str | None = None,
         timeout: int = 30,
         keep_remote_files: bool = False,
+        profile: str | None = None,
     ) -> None:
         self._remote_host = remote_host
         self._remote_user = remote_user
@@ -132,6 +137,7 @@ class SSHClient:
         self._jump_user = jump_user
         self._timeout = timeout
         self._keep_remote_files = keep_remote_files
+        self._profile = profile
 
         self._ssh_runner = SSHRunner(
             host=remote_host,
@@ -149,23 +155,30 @@ class SSHClient:
     # -- factory methods ----------------------------------------------------
 
     @classmethod
-    def from_env(cls, *, keep_remote_files: bool = False) -> "SSHClient":
-        """Create from VB_* environment variables."""
+    def from_env(cls, *, keep_remote_files: bool = False, profile: str | None = None) -> "SSHClient":
+        """Create from VB_* environment variables.
+
+        If *profile* is given (e.g. ``"gpu1"``), reads ``VB_REMOTE_HOST_gpu1``
+        etc.  Otherwise reads the default unsuffixed variables.
+        """
         from dotenv import load_dotenv
         load_dotenv()
 
-        remote_host = os.getenv("VB_REMOTE_HOST", "").strip()
-        if not remote_host:
-            raise RuntimeError("VB_REMOTE_HOST must be set")
+        suffix = f"_{profile}" if profile else ""
 
-        remote_user = os.getenv("VB_REMOTE_USER", "").strip() or None
-        jump_host = os.getenv("VB_JUMP_HOST", "").strip() or None
-        jump_user = os.getenv("VB_JUMP_USER", "").strip() or None
+        remote_host = os.getenv(f"VB_REMOTE_HOST{suffix}", "").strip()
+        if not remote_host:
+            var = f"VB_REMOTE_HOST{suffix}"
+            raise RuntimeError(f"{var} must be set")
+
+        remote_user = os.getenv(f"VB_REMOTE_USER{suffix}", "").strip() or None
+        jump_host = os.getenv(f"VB_JUMP_HOST{suffix}", "").strip() or None
+        jump_user = os.getenv(f"VB_JUMP_USER{suffix}", "").strip() or None
 
         # Port
         from virtuoso_bridge.virtuoso.basic.bridge import _default_remote_port
         try:
-            port = int(os.getenv("VB_REMOTE_PORT", "").strip() or _default_remote_port(remote_user))
+            port = int(os.getenv(f"VB_REMOTE_PORT{suffix}", "").strip() or _default_remote_port(remote_user))
         except (ValueError, TypeError):
             port = _default_remote_port(remote_user)
 
@@ -176,6 +189,7 @@ class SSHClient:
             jump_host=jump_host,
             jump_user=jump_user,
             keep_remote_files=keep_remote_files,
+            profile=profile,
         )
 
     # -- properties ---------------------------------------------------------
@@ -296,7 +310,7 @@ class SSHClient:
             return
         if SSHRunner.can_reach_port(self._port):
             # Port reachable (external tunnel) — load PID from state if available
-            state = self.read_state()
+            state = self.read_state(self._profile)
             if state and state.get("tunnel_pid"):
                 self._ssh_runner.tunnel_pid = state["tunnel_pid"]
             return
@@ -349,7 +363,7 @@ class SSHClient:
         """Kill the tunnel and clean up."""
         # Try state file PID first (may be from a previous session)
         if not self._ssh_runner.is_tunnel_alive:
-            state = self.read_state()
+            state = self.read_state(self._profile)
             if state:
                 pid = state.get("tunnel_pid")
                 if pid:
@@ -369,8 +383,9 @@ class SSHClient:
             pass
 
         # Clear state
-        if _STATE_FILE.exists():
-            _STATE_FILE.unlink(missing_ok=True)
+        sf = _state_file(self._profile)
+        if sf.exists():
+            sf.unlink(missing_ok=True)
 
     def close(self) -> None:
         """Close SSH runner without killing the tunnel (it survives for other scripts)."""
@@ -390,24 +405,26 @@ class SSHClient:
             "tunnel_pid": tunnel_pid,
             "remote_host": self._remote_host,
             "setup_path": self._remote_virtuoso_setup_path,
+            "profile": self._profile,
             "started_at": time.time(),
         }
-        _STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        _state_file(self._profile).write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     @staticmethod
-    def read_state() -> dict[str, Any] | None:
+    def read_state(profile: str | None = None) -> dict[str, Any] | None:
         """Read saved tunnel state."""
-        if not _STATE_FILE.is_file():
+        sf = _state_file(profile)
+        if not sf.is_file():
             return None
         try:
-            return json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+            return json.loads(sf.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
 
     @classmethod
-    def is_running(cls) -> bool:
+    def is_running(cls, profile: str | None = None) -> bool:
         """Check if a tunnel is running (port reachable or process alive)."""
-        state = cls.read_state()
+        state = cls.read_state(profile)
         if not state:
             return False
         port = state.get("port")

@@ -470,23 +470,20 @@ class SpectreSimulator:
         output_format: str | None = "psfascii",
         keep_remote_files: bool = False,
         ssh_runner: SSHRunner | None = None,
+        profile: str | None = None,
     ) -> "SpectreSimulator":
         """Create a remote SpectreSimulator from environment variables.
 
         Automatically reuses the SSH connection managed by ``virtuoso-bridge
-        start`` (via ControlMaster).  If *ssh_runner* is explicitly provided,
-        uses that instead.  Raises RuntimeError if no connection is available.
+        start`` (via ControlMaster).  If *profile* is given, uses that
+        profile's connection.  Raises RuntimeError if no connection is available.
         """
         if ssh_runner is None:
             from virtuoso_bridge.transport.tunnel import SSHClient
-            if not SSHClient.is_running():
-                raise RuntimeError(
-                    "No virtuoso-bridge connection found. "
-                    "Run `virtuoso-bridge start` first."
-                )
-            # Create an SSHRunner with the same host/user/jump config —
-            # ControlMaster=auto will reuse the existing SSH connection.
-            ssh_runner = SSHClient.from_env(keep_remote_files=keep_remote_files).ssh_runner
+            if not SSHClient.is_running(profile):
+                hint = f"Run `virtuoso-bridge start -p {profile}` first." if profile else "Run `virtuoso-bridge start` first."
+                raise RuntimeError(f"No virtuoso-bridge connection found. {hint}")
+            ssh_runner = SSHClient.from_env(keep_remote_files=keep_remote_files, profile=profile).ssh_runner
 
         return cls(
             spectre_cmd=spectre_cmd,

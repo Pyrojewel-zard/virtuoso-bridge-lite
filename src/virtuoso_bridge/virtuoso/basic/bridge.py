@@ -102,29 +102,31 @@ class VirtuosoClient(VirtuosoInterface):
         *,
         timeout: int = 30,
         log_to_ciw: bool = True,
+        profile: str | None = None,
     ) -> "VirtuosoClient":
         """Create a VirtuosoClient from environment variables.
 
-        If an SSH tunnel is already running (via `virtuoso-bridge start`),
-        connects to its port. Otherwise creates a new SSHClient.
+        If *profile* is given (e.g. ``"gpu1"``), reads ``VB_REMOTE_HOST_gpu1``
+        etc.  If an SSH tunnel is already running (via ``virtuoso-bridge start``),
+        connects to its port.  Otherwise creates a new SSHClient.
         """
         load_dotenv()
         from virtuoso_bridge.transport.tunnel import SSHClient
 
         # Check if tunnel is already running
-        if SSHClient.is_running():
-            state = SSHClient.read_state()
+        if SSHClient.is_running(profile):
+            state = SSHClient.read_state(profile)
             port = state["port"]
-            # Create SSHClient for file transfer ops (reuses existing tunnel)
-            ssh = SSHClient.from_env(keep_remote_files=True)
+            ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)
             return cls(host="127.0.0.1", port=port, timeout=timeout, tunnel=ssh, log_to_ciw=log_to_ciw)
 
         # No tunnel running — start one
-        remote_host = os.getenv("VB_REMOTE_HOST", "").strip()
+        suffix = f"_{profile}" if profile else ""
+        remote_host = os.getenv(f"VB_REMOTE_HOST{suffix}", "").strip()
         if not remote_host:
-            raise RuntimeError("VB_REMOTE_HOST must be set. Run: virtuoso-bridge init")
+            raise RuntimeError(f"VB_REMOTE_HOST{suffix} must be set. Run: virtuoso-bridge init")
 
-        ssh = SSHClient.from_env(keep_remote_files=True)
+        ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)
         return cls(host="127.0.0.1", port=ssh.port, timeout=timeout, tunnel=ssh, log_to_ciw=log_to_ciw)
 
     @classmethod

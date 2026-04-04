@@ -88,7 +88,7 @@ def cli_init() -> int:
 
 def _ssh_precheck() -> int | None:
     """Quick SSH connectivity check. Returns exit code on failure, None on success."""
-    ssh_env = remote_ssh_env_from_os()
+    ssh_env = remote_ssh_env_from_os(_get_cli_profile())
 
     if ssh_env.jump_host:
         user = ssh_env.jump_user or ssh_env.remote_user
@@ -112,8 +112,10 @@ def _ssh_precheck() -> int | None:
 
 def cli_start() -> int:
     _load_repo_env()
-    if not os.getenv("VB_REMOTE_HOST", "").strip():
-        print("VB_REMOTE_HOST is not set. Run: virtuoso-bridge init")
+    profile = _get_cli_profile()
+    suffix = f"_{profile}" if profile else ""
+    if not os.getenv(f"VB_REMOTE_HOST{suffix}", "").strip():
+        print(f"VB_REMOTE_HOST{suffix} is not set. Run: virtuoso-bridge init")
         return 1
 
     precheck = _ssh_precheck()
@@ -122,24 +124,24 @@ def cli_start() -> int:
 
     from virtuoso_bridge.transport.tunnel import SSHClient
 
-    if SSHClient.is_running():
+    if SSHClient.is_running(profile):
         print("Tunnel already running.")
         return _print_status()
 
-    print("Starting tunnel...")
-    ssh = SSHClient.from_env(keep_remote_files=True)
+    label = f" [{profile}]" if profile else ""
+    print(f"Starting tunnel{label}...")
+    ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)
     started = time.monotonic()
     ssh.warm()
     elapsed = time.monotonic() - started
     print(f"tunnel.warm = {_fmt(elapsed)}")
-    ssh.close()  # close SSH runner, tunnel process stays alive (detached)
+    ssh.close()
 
-    # Post-start health check: verify tunnel is still alive after a brief delay
     time.sleep(1.0)
-    if not SSHClient.is_running():
+    if not SSHClient.is_running(profile):
         print("[warning] Tunnel process exited shortly after start.")
         print("Try starting the tunnel manually:")
-        ssh_env = remote_ssh_env_from_os()
+        ssh_env = remote_ssh_env_from_os(profile)
         port = ssh.port
         manual_cmd = f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -N -L {port}:127.0.0.1:{port}"
         if ssh_env.jump_host:
@@ -157,13 +159,14 @@ def cli_start() -> int:
 
 def cli_stop() -> int:
     _load_repo_env()
+    profile = _get_cli_profile()
     from virtuoso_bridge.transport.tunnel import SSHClient
 
-    if not SSHClient.is_running():
+    if not SSHClient.is_running(profile):
         print("No tunnel running.")
         return 0
 
-    ssh = SSHClient.from_env(keep_remote_files=True)
+    ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)
     ssh.stop()
     print("Tunnel stopped.")
     return 0
@@ -173,11 +176,12 @@ def cli_stop() -> int:
 
 def cli_restart() -> int:
     _load_repo_env()
+    profile = _get_cli_profile()
     from virtuoso_bridge.transport.tunnel import SSHClient
 
-    if SSHClient.is_running():
+    if SSHClient.is_running(profile):
         print("Stopping tunnel...")
-        ssh = SSHClient.from_env(keep_remote_files=True)
+        ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)
         ssh.stop()
         time.sleep(0.5)
 
@@ -188,11 +192,12 @@ def cli_restart() -> int:
 
 def _print_status() -> int:
     _load_repo_env()
+    profile = _get_cli_profile()
     from virtuoso_bridge.transport.tunnel import SSHClient
     from virtuoso_bridge.virtuoso.basic.bridge import VirtuosoClient
 
-    state = SSHClient.read_state()
-    running = SSHClient.is_running()
+    state = SSHClient.read_state(profile)
+    running = SSHClient.is_running(profile)
 
     print("========================================================================")
     print(f"[tunnel] {'running' if running else 'NOT running'}")
@@ -214,7 +219,8 @@ def _print_status() -> int:
                 # Hostname verification: check remote hostname matches VB_REMOTE_HOST
                 hostname_result = vc.execute_skill('getHostName()', timeout=5)
                 remote_hostname = (hostname_result.output or "").strip().strip('"')
-                configured_host = os.getenv("VB_REMOTE_HOST", "").strip()
+                suffix = f"_{profile}" if profile else ""
+                configured_host = os.getenv(f"VB_REMOTE_HOST{suffix}", "").strip()
                 if remote_hostname and configured_host and remote_hostname != configured_host:
                     print(f"[warning] remote hostname is '{remote_hostname}' but VB_REMOTE_HOST is '{configured_host}'")
                     print(f"  Make sure VB_REMOTE_HOST points to the machine running Virtuoso, not the jump host.")
@@ -237,7 +243,7 @@ def _print_spectre_license() -> None:
 
     try:
         from virtuoso_bridge.spectre.runner import SpectreSimulator
-        sim = SpectreSimulator.from_env()
+        sim = SpectreSimulator.from_env(profile=_get_cli_profile())
         info = sim.check_license()
     except Exception:
         return
@@ -260,10 +266,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="virtuoso-bridge")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("init", help="Create a starter .env")
-    subparsers.add_parser("start", help="Start SSH tunnel + deploy daemon")
-    subparsers.add_parser("stop", help="Stop the SSH tunnel")
-    subparsers.add_parser("restart", help="Restart the SSH tunnel")
-    subparsers.add_parser("status", help="Check tunnel + daemon + license")
+    for name, hlp in [
+        ("start", "Start SSH tunnel + deploy daemon"),
+        ("stop", "Stop the SSH tunnel"),
+        ("restart", "Restart the SSH tunnel"),
+        ("status", "Check tunnel + daemon + license"),
+    ]:
+        sp = subparsers.add_parser(name, help=hlp)
+        sp.add_argument("-p", "--profile", default=None,
+                        help="Connection profile (reads VB_*_<profile> env vars)")
     return parser
 
 
@@ -277,4 +288,16 @@ def main(argv: list[str] | None = None) -> int:
         "restart": cli_restart,
         "status": cli_status,
     }
+    # Pass profile to commands that support it
+    profile = getattr(args, "profile", None)
+    if profile is not None:
+        _CLI_PROFILE[0] = profile
     return dispatch[args.command]()
+
+
+# Global profile for CLI commands (avoids changing all function signatures)
+_CLI_PROFILE: list[str | None] = [None]
+
+
+def _get_cli_profile() -> str | None:
+    return _CLI_PROFILE[0]
