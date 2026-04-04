@@ -199,39 +199,60 @@ def _print_status() -> int:
     state = SSHClient.read_state(profile)
     running = SSHClient.is_running(profile)
 
+    label = f" [{profile}]" if profile else ""
     print("========================================================================")
-    print(f"[tunnel] {'running' if running else 'NOT running'}")
-    if state:
-        print(f"  port: {state.get('port')}")
-        print(f"  tunnel_pid: {state.get('tunnel_pid')}")
-        print(f"  remote: {state.get('remote_host')}")
-        setup_path = state.get("setup_path")
-        if setup_path:
-            print(f"  setup: load(\"{setup_path}\")")
+    print(f"  Virtuoso Bridge Status{label}")
+    print("========================================================================")
 
+    # Tunnel
+    suffix = f"_{profile}" if profile else ""
+    configured_host = os.getenv(f"VB_REMOTE_HOST{suffix}", "").strip()
+    configured_user = os.getenv(f"VB_REMOTE_USER{suffix}", "").strip()
+    jump_host = os.getenv(f"VB_JUMP_HOST{suffix}", "").strip()
+
+    print(f"\n[tunnel] {'running' if running else 'NOT running'}")
+    print(f"  remote host : {configured_host or '(not set)'}")
+    print(f"  remote user : {configured_user or '(not set)'}")
+    if jump_host:
+        print(f"  jump host   : {jump_host}")
+    if state:
+        print(f"  local port  : {state.get('port')}")
+        setup_path = state.get("setup_path")
+    else:
+        setup_path = None
+
+    # Daemon
     if running and state:
         port = state["port"]
         try:
             vc = VirtuosoClient(host="127.0.0.1", port=port, timeout=5)
             ok = vc.test_connection(timeout=5)
-            print(f"[daemon] {'OK' if ok else 'NO RESPONSE'}")
+            print(f"\n[daemon] {'OK — connected to Virtuoso CIW' if ok else 'NO RESPONSE'}")
             if ok:
-                # Hostname verification: check remote hostname matches VB_REMOTE_HOST
                 hostname_result = vc.execute_skill('getHostName()', timeout=5)
                 remote_hostname = (hostname_result.output or "").strip().strip('"')
-                suffix = f"_{profile}" if profile else ""
-                configured_host = os.getenv(f"VB_REMOTE_HOST{suffix}", "").strip()
+                if remote_hostname:
+                    print(f"  hostname : {remote_hostname}")
                 if remote_hostname and configured_host and remote_hostname != configured_host:
-                    print(f"[warning] remote hostname is '{remote_hostname}' but VB_REMOTE_HOST is '{configured_host}'")
-                    print(f"  Make sure VB_REMOTE_HOST points to the machine running Virtuoso, not the jump host.")
-            if not ok and setup_path:
-                print(f"\n  Please execute in Virtuoso CIW: load(\"{setup_path}\")")
-        except Exception as e:
-            print(f"[daemon] error: {e}")
-    elif not running:
-        print("[daemon] cannot check (tunnel not running)")
+                    print(f"  [warning] hostname mismatch: VB_REMOTE_HOST{suffix}={configured_host}")
 
-    print("========================================================================")
+                # Say hello in Virtuoso CIW
+                vc.execute_skill(
+                    'printf("\\n  [virtuoso-bridge] Hello from Virtuoso Bridge! Connection OK.\\n\\n")',
+                    timeout=5,
+                )
+            if not ok and setup_path:
+                print(f"\n  Daemon not responding. Load in Virtuoso CIW:")
+                print(f"    load(\"{setup_path}\")")
+        except Exception as e:
+            print(f"\n[daemon] error: {e}")
+    elif not running:
+        print(f"\n[daemon] cannot check (tunnel not running)")
+        if setup_path:
+            print(f"  After starting, load in Virtuoso CIW:")
+            print(f"    load(\"{setup_path}\")")
+
+    print("\n========================================================================")
     return 0 if running else 1
 
 
