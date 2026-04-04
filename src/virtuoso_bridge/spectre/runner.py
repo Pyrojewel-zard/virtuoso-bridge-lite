@@ -559,8 +559,8 @@ class SpectreSimulator:
             'echo "SPECTRE_PATH=$(which spectre 2>/dev/null || echo NOTFOUND)"; '
             # 2. Spectre version
             'spectre -V 2>&1 | head -1; '
-            # 3. lmstat for Spectre-related features
-            'lmstat -a 2>/dev/null | grep -iE "spectre|Virtuoso_Multi_mode" | head -20'
+            # 3. lmstat for all features with active users
+            'lmstat -a 2>/dev/null | grep -E "Users of" | grep "licenses in use" | grep -v "0 licenses in use"'
         )
 
         result = runner.run_command(check_script, timeout=30)

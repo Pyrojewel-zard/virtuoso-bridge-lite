@@ -289,8 +289,11 @@ def cli_license() -> int:
     print(f"[spectre] {info.get('spectre_path', 'NOT FOUND')}")
     if info.get("version"):
         print(f"  version: {info['version']}")
-    for line in info.get("licenses", []):
-        print(f"  {line}")
+    licenses = info.get("licenses", [])
+    if licenses:
+        print(f"\n[licenses in use] ({len(licenses)} features)")
+        for line in licenses:
+            print(f"  {line}")
 
     ssh.close()
     return 0 if info.get("ok") else 1
