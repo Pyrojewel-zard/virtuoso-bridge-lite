@@ -206,10 +206,11 @@ sim = SpectreSimulator.from_env(profile="worker1")
   <img src="assets/arch.png" alt="Architecture" width="100%"/>
 </p>
 
-- **VirtuosoClient** — pure TCP SKILL client. Sends SKILL, gets results. No SSH awareness.
-- **SSHClient** — manages SSH tunnel + daemon deployment. Provides the `localhost:port` that VirtuosoClient connects to. Optional (not needed for local mode).
+- **VirtuosoClient** — pure TCP SKILL client. Sends SKILL as JSON, gets results. No SSH awareness.
+- **SpectreSimulator** — runs Spectre simulations remotely via SSH shell commands, transfers netlists and results via rsync.
+- **SSHClient** — maintains a persistent ControlMaster connection that multiplexes three channels: TCP port-forwarding (SKILL execution via the daemon), SSH shell commands (Spectre invocation), and rsync file transfer. Optional — bypassed in local mode.
 
-Fully decoupled: VirtuosoClient works with any TCP endpoint — SSH tunnel, VPN, direct LAN, or local.
+Fully decoupled: VirtuosoClient works with any TCP endpoint — SSH tunnel, VPN, direct LAN, or local. Multiple connection profiles are supported, each managing an independent tunnel to a separate design server.
 
 > Want to understand the raw mechanism? See [`core/`](core/) — the entire bridge distilled into 3 files (180 lines).
 
