@@ -20,6 +20,8 @@ arxiv/*.synctex.gz
 arxiv/*.toc
 arxiv/preview/
 texput.log
+*.log
+arxiv/arxiv_submission.zip
 optimization/
 reference/
 .vscode/
