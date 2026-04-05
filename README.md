@@ -119,7 +119,9 @@ virtuoso-bridge init        # creates .env template in current directory
 
 **3. Edit `.env`**
 
-Open the generated `.env` and fill in your connection details:
+Open the generated `.env` and fill in your connection details.
+
+> **Where to put `.env`:** The `.env` file can live in the virtuoso-bridge-lite directory or in your project root (if virtuoso-bridge-lite is cloned as a subdirectory). Both locations are searched automatically. When using virtuoso-bridge-lite inside a larger project, placing `.env` in the project root is recommended so that all tools can find it regardless of working directory.
 
 ```dotenv
 VB_REMOTE_HOST=my-server              # SSH host alias from ~/.ssh/config

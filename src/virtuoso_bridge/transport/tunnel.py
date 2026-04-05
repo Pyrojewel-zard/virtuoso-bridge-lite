@@ -31,6 +31,29 @@ def _state_file(profile: str | None = None) -> Path:
     return _STATE_DIR / name
 
 
+def _load_env_from_repo_or_cwd(load_dotenv_fn) -> None:
+    """Load .env from the virtuoso-bridge repo root, or fall back to CWD search.
+
+    When virtuoso-bridge-lite is cloned inside a project (e.g.
+    ``my-project/virtuoso-bridge-lite/``), the user's ``.env`` may live in
+    either the virtuoso-bridge-lite directory or the project root.
+    This function tries the repo root first, then falls back to the default
+    ``load_dotenv()`` CWD-upward search so both placements work.
+    """
+    # Try to find the virtuoso-bridge repo root
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").is_file():
+            candidate = parent / ".env"
+            if candidate.is_file():
+                load_dotenv_fn(candidate, override=True)
+                return
+            break  # found repo root but no .env there — fall through
+
+    # Fall back: CWD-upward search (default load_dotenv behavior)
+    load_dotenv_fn()
+
+
 # ---------------------------------------------------------------------------
 # Resource helpers (moved from bridge.py)
 # ---------------------------------------------------------------------------
@@ -160,9 +183,18 @@ class SSHClient:
 
         If *profile* is given (e.g. ``"gpu1"``), reads ``VB_REMOTE_HOST_gpu1``
         etc.  Otherwise reads the default unsuffixed variables.
+
+        Searches for ``.env`` in the following order:
+        1. The virtuoso-bridge-lite repo root (if detectable)
+        2. CWD and parent directories (default ``load_dotenv`` behavior)
+
+        This means ``.env`` can live in either the virtuoso-bridge-lite
+        directory or the project root that contains it as a subdirectory.
         """
         from dotenv import load_dotenv
-        load_dotenv()
+
+        # Try repo-root .env first (same logic as CLI)
+        _load_env_from_repo_or_cwd(load_dotenv)
 
         suffix = f"_{profile}" if profile else ""
 
