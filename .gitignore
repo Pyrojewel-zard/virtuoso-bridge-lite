@@ -14,3 +14,4 @@ texput.log
 optimization/
 reference/
 .vscode/
+.DS_Store
