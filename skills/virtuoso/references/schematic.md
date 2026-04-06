@@ -59,3 +59,7 @@ Pattern: `cdfGetInstCDF(inst)` → `cdfFindParamByName(cdf, "paramName")` → `~
 - Use `add_pin_to_instance_term` to connect a top-level pin directly to an instance terminal
 - **Check & save before simulation**: `schCheck` + `dbSave` — otherwise netlisting fails with a blocking dialog
 - **Schematic should be open in GUI** for Maestro to reference it correctly
+
+## See also
+
+- `references/schematic-python-api.md` — Python API reference (SchematicEditor, SchematicOps, low-level builders)

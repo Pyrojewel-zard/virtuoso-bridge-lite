@@ -45,3 +45,7 @@ client.layout.delete_cell(lib, cell)
 - **Mosaic pitch**: origin-to-origin spacing, not edge gap. Derive from measured bbox
 - **Labels on metal**: anchor directly on the metal shape, not beside it
 - **Screenshot after edits**: visually verify geometry, don't trust coordinates alone
+
+## See also
+
+- `references/layout-python-api.md` — Python API reference (LayoutEditor, LayoutOps, low-level builders)

@@ -108,9 +108,12 @@ For the full API (variables, outputs, specs, corners, OCEAN results, history dis
 
 Load only when needed — these contain detailed API docs and edge-case guidance:
 
-- `references/schematic.md` — schematic API, terminal-aware helpers, CDF parameter setting
-- `references/layout.md` — layout API, read/query, mosaic, layer control
-- `references/maestro.md` — ADE Maestro mae* API, OCEAN results, corners, simulation control
+- `references/schematic.md` — schematic SKILL API, terminal-aware helpers, CDF parameter setting
+- `references/schematic-python-api.md` — schematic Python API (SchematicEditor, SchematicOps)
+- `references/layout.md` — layout SKILL API, read/query, mosaic, layer control
+- `references/layout-python-api.md` — layout Python API (LayoutEditor, LayoutOps)
+- `references/maestro.md` — Maestro SKILL API (mae* functions, OCEAN, corners)
+- `references/maestro-python-api.md` — Maestro Python API (session, reader, writer)
 - `references/netlist.md` — CDL/Spectre netlist formats, spiceIn import, netlist export
 
 ## Existing examples
