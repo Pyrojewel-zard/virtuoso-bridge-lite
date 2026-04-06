@@ -200,7 +200,24 @@ def handle_external_connection(conn, addr):
                 else:
                     break  # Other error, stop clearing
 
-        sys.stdout.write(skill_code)
+        # Multi-line SKILL: write to temp file and load() it.
+        # This preserves comments (;) which would break single-line flattening.
+        tmp_il_path = None
+        if "\n" in skill_code or (hasattr(skill_code, 'decode') and b"\n" in skill_code):
+            import tempfile
+            fd, tmp_il_path = tempfile.mkstemp(suffix=".il", prefix="vb_eval_")
+            f = os.fdopen(fd, "w")
+            if isinstance(skill_code, bytes):
+                f.write(skill_code.decode("utf-8"))
+            else:
+                f.write(skill_code)
+            f.close()
+            escaped_path = tmp_il_path.replace("\\", "/")
+            send_code = 'load("%s")\n' % escaped_path
+        else:
+            send_code = skill_code
+
+        sys.stdout.write(send_code)
         sys.stdout.flush()
 
         # Start watchdog timer
@@ -225,6 +242,13 @@ def handle_external_connection(conn, addr):
             _safe_sendall(conn, returnData.encode('utf-8'))
         else:
             _safe_sendall(conn, returnData)
+
+        # Clean up temp file if we used one
+        if tmp_il_path:
+            try:
+                os.unlink(tmp_il_path)
+            except OSError:
+                pass
 
     except ValueError as e:
         # Python 2.7 compatibility: handle JSON decode errors

@@ -144,7 +144,20 @@ def handle_external_connection(conn, addr):
             except IOError:
                 break
 
-        sys.stdout.buffer.write(skill_code.encode("utf-8"))
+        # Multi-line SKILL: write to temp file and load() it.
+        # This preserves comments (;) which would break single-line flattening.
+        tmp_il_path = None
+        if "\n" in skill_code:
+            import tempfile
+            fd, tmp_il_path = tempfile.mkstemp(suffix=".il", prefix="vb_eval_")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(skill_code)
+            escaped_path = tmp_il_path.replace("\\", "/")
+            send_code = f'load("{escaped_path}")\n'
+        else:
+            send_code = skill_code
+
+        sys.stdout.buffer.write(send_code.encode("utf-8"))
         sys.stdout.buffer.flush()
 
         # Start watchdog timer
@@ -159,6 +172,13 @@ def handle_external_connection(conn, addr):
         watchdog_timer.cancel()
 
         _safe_sendall(conn, returnData)
+
+        # Clean up temp file if we used one
+        if tmp_il_path:
+            try:
+                os.unlink(tmp_il_path)
+            except OSError:
+                pass
 
     except json.JSONDecodeError as e:
         _safe_sendall(conn, f"\x15JSONDecodeError: {e}".encode("utf-8"))
