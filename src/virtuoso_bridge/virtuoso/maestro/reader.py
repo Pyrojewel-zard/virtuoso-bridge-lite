@@ -151,23 +151,29 @@ def read_results(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]
 
     expr = 'maeGetResultTests()'
     result["maeGetResultTests"] = q("maeGetResultTests", expr)
-    result_tests = re.findall(r'"([^"]+)"', result["maeGetResultTests"][1])
 
-    for rt in result_tests:
-        expr = f'maeGetResultOutputs(?testName "{rt}")'
-        result[f"maeGetResultOutputs:{rt}"] = q(f"maeGetResultOutputs:{rt}", expr)
-        result_outputs = re.findall(
-            r'"([^"]+)"', result[f"maeGetResultOutputs:{rt}"][1])
-        for ro in result_outputs:
-            expr = f'maeGetOutputValue("{ro}" "{rt}")'
-            _, val = q(f"maeGetOutputValue:{rt}:{ro}", expr)
-            if val and val != "nil":
-                result[f"maeGetOutputValue:{rt}:{ro}"] = (expr, val)
-
-            expr = f'maeGetSpecStatus("{ro}" "{rt}")'
-            _, spec = q(f"maeGetSpecStatus:{rt}:{ro}", expr)
-            if spec and spec != "nil":
-                result[f"maeGetSpecStatus:{rt}:{ro}"] = (expr, spec)
+    # Iterate outputs in SKILL to avoid Python regex issues with nested quotes.
+    # Returns: ((outputName value specStatus) ...) for each test.
+    values_expr = '''
+let((tests info)
+  info = list()
+  tests = maeGetResultTests()
+  foreach(test tests
+    let((outputs)
+      outputs = maeGetResultOutputs(?testName test)
+      foreach(outName outputs
+        let((val spec)
+          val = maeGetOutputValue(outName test)
+          spec = maeGetSpecStatus(outName test)
+          info = append1(info list(test outName val spec))
+        )
+      )
+    )
+  )
+  info
+)
+'''
+    result["maeGetOutputValues"] = q("maeGetOutputValues", values_expr)
 
     expr = 'maeGetOverallSpecStatus()'
     result["maeGetOverallSpecStatus"] = q("maeGetOverallSpecStatus", expr)
@@ -178,3 +184,52 @@ def read_results(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]
     client.execute_skill('maeCloseResults()')
 
     return result
+
+
+def export_waveform(
+    client: VirtuosoClient,
+    ses: str,
+    expression: str,
+    local_path: str,
+    *,
+    analysis: str = "ac",
+    history: str = "",
+) -> str:
+    """Export a waveform via OCEAN to a local text file.
+
+    Args:
+        ses: session string (used to find history if not given)
+        expression: OCEAN expression, e.g. 'dB20(mag(VF("/VOUT")))'
+        local_path: where to save locally
+        analysis: which analysis to select ("ac", "tran", "noise", etc.)
+        history: explicit history name; auto-detected if empty
+
+    Returns the local file path.
+
+    SKILL/OCEAN calls used:
+        maeOpenResults(?history "...")
+        selectResults("ac")
+        ocnPrint(<expression> ?numberNotation 'scientific ?numSpaces 1 ?output "/tmp/...")
+        maeCloseResults()
+    """
+    # Auto-detect history name
+    if not history:
+        r = client.execute_skill('asiGetResultsDir(asiGetCurrentSession())')
+        rd = (r.output or "").strip('"')
+        m = re.search(r'/maestro/results/maestro/([^/]+)/', rd)
+        if not m:
+            raise RuntimeError("No simulation history found")
+        history = m.group(1)
+
+    remote_path = f"/tmp/vb_wave_{history}.txt"
+
+    client.execute_skill(f'maeOpenResults(?history "{history}")')
+    client.execute_skill(f'selectResults("{analysis}")')
+    client.execute_skill(
+        f'ocnPrint({expression} '
+        f'?numberNotation \'scientific ?numSpaces 1 '
+        f'?output "{remote_path}")')
+    client.execute_skill('maeCloseResults()')
+
+    client.download_file(remote_path, local_path)
+    return local_path

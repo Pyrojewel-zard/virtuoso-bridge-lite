@@ -25,74 +25,79 @@ ses = open_session(client, "PLAYGROUND_AMP", "TB_AMP_5T_D2S_DC_AC")
 close_session(client, ses)
 ```
 
-## Read Config
+## Read — Three independent functions
 
 `maestro/reader.py`
 
-| Python | SKILL functions called |
-|--------|-----------------------|
-| `read_config(client, ses, verbose=1) -> dict[str, tuple[str, str]]` | See below |
+All return `dict[str, tuple[str, str]]` where key = label, value = `(skill_expr, raw_output)`.
 
-Returns a dict where key = label, value = `(skill_expr, raw_output)`.
-- `skill_expr` — exact SKILL expression, can be pasted into CIW to reproduce
-- `raw_output` — raw SKILL return value
-
-### Verbosity levels
-
-| verbose | What it reads | Use case |
-|---------|---------------|----------|
-| **0** | tests, enabled analyses, outputs, variables | Quick overview |
-| **1** (default) | + per-analysis params, parameters, corners | Full setup |
-| **2** | + envOption, simOption, runMode, jobControl, simulation results | Everything |
-
-### Queries by level
-
-**Level 0** — quick overview:
+### read_config — test setup
 
 | Key | SKILL |
 |-----|-------|
 | `maeGetSetup` | `maeGetSetup(?session ses)` |
 | `maeGetEnabledAnalysis` | `maeGetEnabledAnalysis(test ?session ses)` |
+| `maeGetAnalysis:<name>` | `maeGetAnalysis(test name ?session ses)` — one per enabled analysis |
 | `maeGetTestOutputs` | `maeGetTestOutputs(test ?session ses)` — returns `(name type signal expression)` |
 | `variables` | `maeGetSetup(?session ses ?typeName "variables")` |
-
-**Level 1** — adds full setup:
-
-| Key | SKILL |
-|-----|-------|
-| `maeGetAnalysis:<name>` | `maeGetAnalysis(test name ?session ses)` — one per enabled analysis |
 | `parameters` | `maeGetSetup(?session ses ?typeName "parameters")` |
 | `corners` | `maeGetSetup(?session ses ?typeName "corners")` |
 
-**Level 2** — adds env/sim/results:
+### read_env — system settings
 
 | Key | SKILL |
 |-----|-------|
-| `maeGetEnvOption` | `maeGetEnvOption(test ?session ses)` — all env options (model files, view lists, ...) |
-| `maeGetSimOption` | `maeGetSimOption(test ?session ses)` — all sim options (reltol, temp, ...) |
+| `maeGetEnvOption` | `maeGetEnvOption(test ?session ses)` — model files, view lists, etc. |
+| `maeGetSimOption` | `maeGetSimOption(test ?session ses)` — reltol, temp, gmin, etc. |
 | `maeGetCurrentRunMode` | `maeGetCurrentRunMode(?session ses)` |
 | `maeGetJobControlMode` | `maeGetJobControlMode(?session ses)` |
-| `maeGetResultTests` | `maeGetResultTests()` — only if results exist |
-| `maeGetResultOutputs:<test>` | `maeGetResultOutputs(?testName test)` |
-| `maeGetOutputValue:<test>:<output>` | `maeGetOutputValue(output test)` |
-| `maeGetSpecStatus:<test>:<output>` | `maeGetSpecStatus(output test)` |
+| `maeGetSimulationMessages` | `maeGetSimulationMessages(?session ses)` |
+
+### read_results — simulation results
+
+| Key | SKILL |
+|-----|-------|
+| `maeGetResultTests` | `maeGetResultTests()` |
+| `maeGetOutputValues` | SKILL loop: `maeGetOutputValue` + `maeGetSpecStatus` for each output |
 | `maeGetOverallSpecStatus` | `maeGetOverallSpecStatus()` |
 | `maeGetOverallYield` | `maeGetOverallYield(history)` |
-| `maeGetSimulationMessages` | `maeGetSimulationMessages(?session ses)` |
+
+History name is auto-detected from `asiGetResultsDir`. Returns empty dict if no results.
+
+### export_waveform — download wave data
+
+| Python | SKILL / OCEAN |
+|--------|---------------|
+| `export_waveform(client, ses, expression, local_path, *, analysis="ac", history="")` | `maeOpenResults` → `selectResults` → `ocnPrint` → `maeCloseResults` |
+
+For outputs that return `"wave"` instead of a scalar. Downloads the waveform as a text file (freq/time vs value).
 
 ```python
 ses = open_session(client, "PLAYGROUND_AMP", "TB_AMP_5T_D2S_DC_AC")
 
-# Quick overview
-for key, (skill_expr, raw) in read_config(client, ses, verbose=0).items():
-    print(f"[{key}] {skill_expr}")
+# Read config
+for key, (expr, raw) in read_config(client, ses).items():
+    print(f"[{key}] {expr}")
     print(raw)
 
-# Full setup (default)
-read_config(client, ses)
+# Read env
+for key, (expr, raw) in read_env(client, ses).items():
+    print(f"[{key}] {expr}")
+    print(raw)
 
-# Everything including env options and simulation results
-read_config(client, ses, verbose=2)
+# Read results
+for key, (expr, raw) in read_results(client, ses).items():
+    print(f"[{key}] {expr}")
+    print(raw)
+
+# Export waveform
+export_waveform(client, ses,
+    'dB20(mag(VF("/VOUT") / VF("/VSIN")))',
+    "output/gain_db.txt", analysis="ac")
+
+export_waveform(client, ses,
+    'getData("out" ?result "noise")',
+    "output/noise.txt", analysis="noise")
 
 close_session(client, ses)
 ```
