@@ -15,4 +15,4 @@ optimization/
 reference/
 .vscode/
 .DS_Store
-spectre.out
+spectre.outdocs/
