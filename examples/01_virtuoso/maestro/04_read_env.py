@@ -18,12 +18,12 @@ from virtuoso_bridge.virtuoso.maestro import find_open_session, read_env
 def main() -> int:
     client = VirtuosoClient.from_env()
 
-    ses = find_open_session(client)
-    if ses is None:
+    session = find_open_session(client)
+    if session is None:
         print("No active maestro session found.")
         return 1
 
-    for key, (skill_expr, raw) in read_env(client, ses).items():
+    for key, (skill_expr, raw) in read_env(client, session).items():
         print(f"[{key}] {skill_expr}")
         print(raw)
     return 0

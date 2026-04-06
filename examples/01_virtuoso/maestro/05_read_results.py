@@ -18,12 +18,12 @@ from virtuoso_bridge.virtuoso.maestro import find_open_session, read_results
 def main() -> int:
     client = VirtuosoClient.from_env()
 
-    ses = find_open_session(client)
-    if ses is None:
+    session = find_open_session(client)
+    if session is None:
         print("No active maestro session found.")
         return 1
 
-    results = read_results(client, ses)
+    results = read_results(client, session)
     if not results:
         print("No simulation results found.")
         return 1

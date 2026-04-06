@@ -46,10 +46,10 @@ All `mae*` functions operate on the **complete maestro cellview**, not just the 
 
 ```scheme
 ; Open existing maestro (returns session string, e.g. "fnxSession4")
-ses = maeOpenSetup("myLib" "myCell" "maestro")
+session = maeOpenSetup("myLib" "myCell" "maestro")
 
 ; Open in append mode (for editing existing setup)
-ses = maeOpenSetup("myLib" "myCell" "maestro" ?mode "a")
+session = maeOpenSetup("myLib" "myCell" "maestro" ?mode "a")
 ```
 
 **`?session` is a string.** Pass it as `?session "fnxSession4"`, not as an unquoted variable.
@@ -310,9 +310,9 @@ lib, cell = "myLib", "myCell"
 
 # Step 1: Close all existing sessions (edit mode is exclusive)
 r = client.execute_skill('maeGetSessions()')
-for ses in r.output.strip('()').replace('"', '').split():
-    if ses and ses != 'nil':
-        client.execute_skill(f'maeCloseSession(?session "{ses}" ?forceClose t)')
+for session in r.output.strip('()').replace('"', '').split():
+    if session and session != 'nil':
+        client.execute_skill(f'maeCloseSession(?session "{session}" ?forceClose t)')
 
 # Step 2: List available histories via simulation results directory
 #   Path: <simDir>/maestro/results/maestro/<historyName>/
@@ -369,7 +369,7 @@ The pnoise "jitter event" table (the Add/Delete buttons in Choosing Analyses →
 
 Setting pnoise analysis parameters (frequency range, method, trigger nodes) works via:
 ```python
-client.execute_skill(f'maeSetAnalysis("{test}" "pnoise" ?enable t ?options `(...) ?session "{ses}")')
+client.execute_skill(f'maeSetAnalysis("{test}" "pnoise" ?enable t ?options `(...) ?session "{session}")')
 ```
 
 **Note:** `maeGetAnalysis` and `maeSetAnalysis` work without `hiSetCurrentWindow`. They operate on the current active maestro session directly. Both backtick syntax `` `(("key" "val")) `` and `list(list("key" "val"))` work for the `?options` argument.
@@ -460,30 +460,30 @@ client.open_window(lib, cell, view="schematic")
 
 # 2. Open/create maestro
 r = client.execute_skill(f'maeOpenSetup("{lib}" "{cell}" "maestro")')
-ses = r.output.strip('"')
+session = r.output.strip('"')
 
 # 3. Create test + analysis
 client.execute_skill(
     f'maeCreateTest("AC" ?lib "{lib}" ?cell "{cell}" '
-    f'?view "schematic" ?simulator "spectre" ?session "{ses}")')
+    f'?view "schematic" ?simulator "spectre" ?session "{session}")')
 client.execute_skill(
-    f'maeSetAnalysis("AC" "tran" ?enable nil ?session "{ses}")')
+    f'maeSetAnalysis("AC" "tran" ?enable nil ?session "{session}")')
 client.execute_skill(
     f'maeSetAnalysis("AC" "ac" ?enable t '
     f'?options `(("start" "1") ("stop" "10G") ("dec" "20")) '
-    f'?session "{ses}")')
+    f'?session "{session}")')
 
 # 4. Add outputs + variables
 client.execute_skill(
     f'maeAddOutput("Vout" "AC" ?outputType "net" '
-    f'?signalName "/OUT" ?session "{ses}")')
-client.execute_skill(f'maeSetVar("c_val" "1p,100f" ?session "{ses}")')
+    f'?signalName "/OUT" ?session "{session}")')
+client.execute_skill(f'maeSetVar("c_val" "1p,100f" ?session "{session}")')
 
 # 5. Save + run (async — never use ?waitUntilDone t, it blocks the event loop)
 client.execute_skill(
     f'maeSaveSetup(?lib "{lib}" ?cell "{cell}" '
-    f'?view "maestro" ?session "{ses}")')
-client.execute_skill(f'maeRunSimulation(?session "{ses}")')
+    f'?view "maestro" ?session "{session}")')
+client.execute_skill(f'maeRunSimulation(?session "{session}")')
 client.execute_skill("maeWaitUntilDone('All)", timeout=300)
 
 # 6. Export results

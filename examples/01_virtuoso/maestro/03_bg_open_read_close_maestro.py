@@ -19,13 +19,13 @@ CELL = "TB_AMP_5T_D2S_DC_AC"
 def main() -> int:
     client = VirtuosoClient.from_env()
 
-    ses = open_session(client, LIB, CELL)
+    session = open_session(client, LIB, CELL)
 
-    for key, (skill_expr, raw) in read_config(client, ses).items():
+    for key, (skill_expr, raw) in read_config(client, session).items():
         print(f"[{key}] {skill_expr}")
         print(raw)
 
-    close_session(client, ses)
+    close_session(client, session)
     return 0
 
 

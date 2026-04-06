@@ -219,21 +219,21 @@ def create_maestro(client: VirtuosoClient) -> str:
     print("[maestro] Creating Maestro view...")
 
     r = skill(client, f'maeOpenSetup("{LIB}" "{CELL}" "maestro")')
-    ses = r.output.strip('"')
-    print(f"[maestro] Session: {ses}")
+    session = r.output.strip('"')
+    print(f"[maestro] Session: {session}")
 
     # Create test pointing to the schematic
     skill(client,
           f'maeCreateTest("AC" ?lib "{LIB}" ?cell "{CELL}" '
-          f'?view "schematic" ?simulator "spectre" ?session "{ses}")')
+          f'?view "schematic" ?simulator "spectre" ?session "{session}")')
 
     # Disable default tran, enable AC (1 Hz to 10 GHz, 20 pts/decade)
-    skill(client, f'maeSetAnalysis("AC" "tran" ?enable nil ?session "{ses}")')
+    skill(client, f'maeSetAnalysis("AC" "tran" ?enable nil ?session "{session}")')
     skill(client,
           f'maeSetAnalysis("AC" "ac" ?enable t '
           f'?options `(("start" "1") ("stop" "10G") '
           f'("incrType" "Logarithmic") ("stepTypeLog" "Points Per Decade") '
-          f'("dec" "20")) ?session "{ses}")')
+          f'("dec" "20")) ?session "{session}")')
 
     # NOTE: Spectre X mode and accuracy preset (CX/AX/MX/LX/VX) must be
     # configured manually in the Maestro GUI via Options → High-Performance
@@ -242,36 +242,36 @@ def create_maestro(client: VirtuosoClient) -> str:
     # Add output: waveform
     skill(client,
           f'maeAddOutput("Vout" "AC" ?outputType "net" '
-          f'?signalName "/OUT" ?session "{ses}")')
+          f'?signalName "/OUT" ?session "{session}")')
 
     # Add output: -3 dB bandwidth measurement
     # NOTE: use VF() (frequency-domain voltage) not v() in Maestro expressions
     skill(client,
           f'maeAddOutput("BW" "AC" ?outputType "point" '
           f'?expr "bandwidth(mag(VF(\\"/OUT\\")) 3 \\"low\\")" '
-          f'?session "{ses}")')
+          f'?session "{session}")')
 
     # Add spec: bandwidth > 1 GHz
-    skill(client, f'maeSetSpec("BW" "AC" ?gt "1G" ?session "{ses}")')
+    skill(client, f'maeSetSpec("BW" "AC" ?gt "1G" ?session "{session}")')
 
     # Set design variable with comma-separated sweep values
     sweep_str = ",".join(C_VALUES)
-    skill(client, f'maeSetVar("c_val" "{sweep_str}" ?session "{ses}")')
+    skill(client, f'maeSetVar("c_val" "{sweep_str}" ?session "{session}")')
 
     # Save
     skill(client,
           f'maeSaveSetup(?lib "{LIB}" ?cell "{CELL}" '
-          f'?view "maestro" ?session "{ses}")')
+          f'?view "maestro" ?session "{session}")')
 
     print(f"[maestro] AC: 1 Hz - 10 GHz, 20 pts/dec | sweep c_val: {sweep_str}")
-    return ses
+    return session
 
 
 # ---------------------------------------------------------------------------
 # 3. Run simulation
 # ---------------------------------------------------------------------------
 
-def run_simulation(client: VirtuosoClient, ses: str) -> str:
+def run_simulation(client: VirtuosoClient, session: str) -> str:
     """Run simulation and return the results directory.
 
     The parametric sweep runs all C values in a single simulation.
@@ -281,7 +281,7 @@ def run_simulation(client: VirtuosoClient, ses: str) -> str:
     # Synchronous run: ?waitUntilDone t blocks until simulation finishes
     elapsed, r = timed_call(
         lambda: skill(client,
-                      f'maeRunSimulation(?waitUntilDone t ?session "{ses}")',
+                      f'maeRunSimulation(?waitUntilDone t ?session "{session}")',
                       timeout=300)
     )
     run_name = r.output.strip('"') if r.output else ""
@@ -422,20 +422,20 @@ def check_specs(client: VirtuosoClient) -> None:
 # 5c. Export waveforms via export_waveform API
 # ---------------------------------------------------------------------------
 
-def export_waveforms(client: VirtuosoClient, ses: str) -> None:
+def export_waveforms(client: VirtuosoClient, session: str) -> None:
     """Export AC magnitude and phase waveforms using export_waveform."""
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # AC magnitude (dB)
-    path = export_waveform(client, ses,
+    path = export_waveform(client, session,
         'dB20(mag(v("/OUT")))',
         str(output_dir / "rc_ac_mag_db.txt"),
         analysis="ac")
     print(f"[export] AC magnitude: {path}")
 
     # AC phase
-    path = export_waveform(client, ses,
+    path = export_waveform(client, session,
         'phase(v("/OUT"))',
         str(output_dir / "rc_ac_phase.txt"),
         analysis="ac")
@@ -458,10 +458,10 @@ def open_maestro_with_history(client: VirtuosoClient,
     # Close all existing sessions
     r = skill(client, "maeGetSessions()")
     if r.output and r.output.strip() not in ("nil", ""):
-        for ses in r.output.strip("()").replace('"', "").split():
-            if ses:
+        for session in r.output.strip("()").replace('"', "").split():
+            if session:
                 skill(client,
-                      f'maeCloseSession(?session "{ses}" ?forceClose t)')
+                      f'maeCloseSession(?session "{session}" ?forceClose t)')
 
     # Find history names from results directory
     m = re.match(r"(.*/maestro/results/maestro/)", results_dir)
@@ -501,10 +501,10 @@ def main() -> int:
     create_schematic(client)
 
     # 2. Create Maestro with AC + sweep
-    ses = create_maestro(client)
+    session = create_maestro(client)
 
     # 3. Run (single run, sweep handles both C values)
-    results_dir = run_simulation(client, ses)
+    results_dir = run_simulation(client, session)
 
     # 4. Read results
     datasets = read_results(client, results_dir)
@@ -520,7 +520,7 @@ def main() -> int:
     check_specs(client)
 
     # 5c. Export waveform using export_waveform API
-    export_waveforms(client, ses)
+    export_waveforms(client, session)
 
     # 6. Open Maestro GUI with latest history
     open_maestro_with_history(client, results_dir)

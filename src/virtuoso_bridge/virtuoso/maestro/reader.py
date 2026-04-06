@@ -1,9 +1,9 @@
 """Read Maestro configuration, environment, and simulation results.
 
 Three independent read functions:
-    read_config(client, ses)  — test setup: analyses, outputs, variables, corners
-    read_env(client, ses)     — system settings: env options, sim options, run mode
-    read_results(client, ses) — simulation results: output values, specs, yield
+    read_config(client, session)  — test setup: analyses, outputs, variables, corners
+    read_env(client, session)     — system settings: env options, sim options, run mode
+    read_results(client, session) — simulation results: output values, specs, yield
 """
 
 import re
@@ -24,9 +24,9 @@ def _q(client: VirtuosoClient, label: str, expr: str) -> tuple[str, str]:
     return (expr, r.output or "")
 
 
-def _get_test(client: VirtuosoClient, ses: str) -> str:
+def _get_test(client: VirtuosoClient, session: str) -> str:
     """Get the first test name from a session."""
-    r = client.execute_skill(f'maeGetSetup(?session "{ses}")')
+    r = client.execute_skill(f'maeGetSetup(?session "{session}")')
     raw = r.output or ""
     if raw and raw != "nil":
         m = re.findall(r'"([^"]+)"', raw)
@@ -35,7 +35,7 @@ def _get_test(client: VirtuosoClient, ses: str) -> str:
     return ""
 
 
-def read_config(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]:
+def read_config(client: VirtuosoClient, session: str) -> dict[str, tuple[str, str]]:
     """Read test configuration: tests, analyses, outputs, variables, parameters, corners.
 
     Returns dict of (skill_expr, raw_output) tuples.
@@ -43,7 +43,7 @@ def read_config(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]:
     def q(label, expr):
         return _q(client, label, expr)
 
-    expr = f'maeGetSetup(?session "{ses}")'
+    expr = f'maeGetSetup(?session "{session}")'
     _, tests_raw = q("maeGetSetup", expr)
     test = ""
     if tests_raw and tests_raw != "nil":
@@ -56,20 +56,20 @@ def read_config(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]:
         return result
 
     # Enabled analyses
-    expr = f'maeGetEnabledAnalysis("{test}" ?session "{ses}")'
+    expr = f'maeGetEnabledAnalysis("{test}" ?session "{session}")'
     _, enabled_raw = q("maeGetEnabledAnalysis", expr)
     result["maeGetEnabledAnalysis"] = (expr, enabled_raw)
     enabled = re.findall(r'"([^"]+)"', enabled_raw)
 
     # Per-analysis params
     for ana in enabled:
-        expr = f'maeGetAnalysis("{test}" "{ana}" ?session "{ses}")'
+        expr = f'maeGetAnalysis("{test}" "{ana}" ?session "{session}")'
         result[f"maeGetAnalysis:{ana}"] = q(f"maeGetAnalysis:{ana}", expr)
 
     # Outputs
     expr_out = (
         f'let((outs result) '
-        f'outs = maeGetTestOutputs("{test}" ?session "{ses}") '
+        f'outs = maeGetTestOutputs("{test}" ?session "{session}") '
         f'result = list() '
         f'foreach(o outs '
         f'  result = append1(result list(o~>name o~>type o~>signal o~>expression))) '
@@ -79,13 +79,13 @@ def read_config(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]:
 
     # Variables, parameters, corners
     for type_name in ("variables", "parameters", "corners"):
-        expr = f'maeGetSetup(?session "{ses}" ?typeName "{type_name}")'
+        expr = f'maeGetSetup(?session "{session}" ?typeName "{type_name}")'
         result[type_name] = q(type_name, expr)
 
     return result
 
 
-def read_env(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]:
+def read_env(client: VirtuosoClient, session: str) -> dict[str, tuple[str, str]]:
     """Read system settings: env options, sim options, run mode, job control.
 
     Returns dict of (skill_expr, raw_output) tuples.
@@ -93,26 +93,26 @@ def read_env(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]:
     def q(label, expr):
         return _q(client, label, expr)
 
-    test = _get_test(client, ses)
+    test = _get_test(client, session)
     if not test:
         return {}
 
     result: dict[str, tuple[str, str]] = {}
 
-    expr = f'maeGetEnvOption("{test}" ?session "{ses}")'
+    expr = f'maeGetEnvOption("{test}" ?session "{session}")'
     result["maeGetEnvOption"] = q("maeGetEnvOption", expr)
 
-    expr = f'maeGetSimOption("{test}" ?session "{ses}")'
+    expr = f'maeGetSimOption("{test}" ?session "{session}")'
     result["maeGetSimOption"] = q("maeGetSimOption", expr)
 
-    expr = f'maeGetCurrentRunMode(?session "{ses}")'
+    expr = f'maeGetCurrentRunMode(?session "{session}")'
     result["maeGetCurrentRunMode"] = q("maeGetCurrentRunMode", expr)
 
-    expr = f'maeGetJobControlMode(?session "{ses}")'
+    expr = f'maeGetJobControlMode(?session "{session}")'
     result["maeGetJobControlMode"] = q("maeGetJobControlMode", expr)
 
     # Simulation messages
-    expr = f'maeGetSimulationMessages(?session "{ses}")'
+    expr = f'maeGetSimulationMessages(?session "{session}")'
     _, sim_msgs = q("maeGetSimulationMessages", expr)
     if sim_msgs and sim_msgs not in ("nil", '""'):
         result["maeGetSimulationMessages"] = (expr, sim_msgs)
@@ -120,7 +120,7 @@ def read_env(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]:
     return result
 
 
-def read_results(client: VirtuosoClient, ses: str) -> dict[str, tuple[str, str]]:
+def read_results(client: VirtuosoClient, session: str) -> dict[str, tuple[str, str]]:
     """Read simulation results: output values, spec status, yield.
 
     Finds the latest history automatically. Returns empty dict if no results.
@@ -188,7 +188,7 @@ let((tests info)
 
 def export_waveform(
     client: VirtuosoClient,
-    ses: str,
+    session: str,
     expression: str,
     local_path: str,
     *,
@@ -198,7 +198,7 @@ def export_waveform(
     """Export a waveform via OCEAN to a local text file.
 
     Args:
-        ses: session string (used to find history if not given)
+        session: session string (used to find history if not given)
         expression: OCEAN expression, e.g. 'dB20(mag(VF("/VOUT")))'
         local_path: where to save locally
         analysis: which analysis to select ("ac", "tran", "noise", etc.)

@@ -31,12 +31,12 @@ let((before after session)
   session
 )
 ''')
-    ses = (r.output or "").strip('"')
-    if not ses or ses in ("nil", "t"):
+    session = (r.output or "").strip('"')
+    if not session or session in ("nil", "t"):
         print(f"MaestroOpen failed for {LIB}/{CELL}")
         return 1
 
-    for key, (skill_expr, raw) in read_config(client, ses).items():
+    for key, (skill_expr, raw) in read_config(client, session).items():
         print(f"[{key}] {skill_expr}")
         print(raw)
 
