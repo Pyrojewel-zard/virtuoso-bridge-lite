@@ -44,26 +44,35 @@ def main() -> int:
     print(f"[info] {LIB}/{CELL}")
     t_total = time.time()
 
+    # 0. Clean up residual sessions and windows
+    client.execute_skill('''
+foreach(s maeGetSessions() errset(maeCloseSession(?session s ?forceClose t)))
+foreach(win hiGetWindowList()
+  let((n) n = hiGetWindowName(win)
+    when(and(n rexMatchp("maestro" n))
+      errset(hiCloseWindow(win))
+      let((form) form = hiGetCurrentForm() when(form errset(hiFormCancel(form)))))))
+t
+''')
+
     # 1. Start simulation (background session, async)
     session = open_session(client, LIB, CELL)
     t0 = time.time()
     run_simulation(client, session=session)
     print(f"[sim] Started ({time.time() - t0:.1f}s)")
 
-    # 2. Open GUI while simulation runs
-    client.execute_skill(
-        f'deOpenCellView("{LIB}" "{CELL}" "maestro" "maestro" nil "r")')
-    client.execute_skill('maeMakeEditable()')
-    print("[gui] Maestro opened")
-
-    # 3. Wait for simulation (poll spectre processes, non-blocking)
+    # 2. Wait for simulation (poll spectre processes, non-blocking)
     print("[sim] Waiting...")
     wait_until_done(client, timeout=600)
     elapsed_sim = time.time() - t0
     print(f"[sim] Done ({elapsed_sim:.1f}s)")
 
-    # Close background session (simulation done, GUI session takes over)
+    # 3. Close background session, open GUI for reading results
     close_session(client, session)
+    client.execute_skill(
+        f'deOpenCellView("{LIB}" "{CELL}" "maestro" "maestro" nil "r")')
+    client.execute_skill('maeMakeEditable()')
+    print("[gui] Maestro opened")
 
     # Find GUI session
     r = client.execute_skill('''
@@ -119,6 +128,13 @@ let((s) s = nil
                         f_3db = f
                     print(f"  f_3dB = {f_3db:.3e} Hz")
                     break
+
+    # 6. Restore latest history in GUI so user can see results
+    if history:
+        client.execute_skill(f'maeRestoreHistory("{history}")')
+        from virtuoso_bridge.virtuoso.maestro import save_setup
+        save_setup(client, LIB, CELL)
+        print(f"\n[gui] Showing {history}")
 
     print(f"\n[total] {time.time() - t_total:.1f}s")
     return 0
