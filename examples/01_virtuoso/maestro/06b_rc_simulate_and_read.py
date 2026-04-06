@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Step 2: Run simulation, open GUI, wait, read results, export waveforms.
+"""Step 2: Run simulation, read results, export waveforms, show in GUI.
 
 Prerequisite: run 06a_rc_create.py first.
 
 Flow:
-1. Background session → start simulation (async)
-2. Open Maestro GUI (while simulation is running)
-3. Poll spectre processes until done (non-blocking, LSCS parallel)
-4. Read results + export waveforms via GUI session
+1. Ensure clean state (close sessions, windows, remove locks)
+2. Background session → start simulation → poll until done
+3. Open GUI read-only → read results + export waveforms
+4. Make editable → restore history → save → done
 """
 
 import re
@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 from virtuoso_bridge import VirtuosoClient
 from virtuoso_bridge.virtuoso.maestro import (
     open_session, close_session, run_simulation, wait_until_done,
-    read_results, export_waveform,
+    read_results, export_waveform, save_setup,
 )
 
 LIB = "PLAYGROUND_LLM"
@@ -39,42 +39,61 @@ def parse_wave_file(path: str) -> list[tuple[float, float]]:
     return pairs
 
 
+def ensure_clean(client: VirtuosoClient) -> None:
+    """Close all sessions, close all maestro windows (save first), remove locks."""
+    # Save + close all maestro windows (save prevents "save changes?" dialog)
+    client.execute_skill(f'''
+foreach(s maeGetSessions()
+  errset(maeSaveSetup(?lib "{LIB}" ?cell "{CELL}" ?view "maestro" ?session s))
+  errset(maeCloseSession(?session s ?forceClose t))
+)
+foreach(win hiGetWindowList()
+  let((n) n = hiGetWindowName(win)
+    when(and(n rexMatchp("maestro" n))
+      errset(hiCloseWindow(win))
+      let((form) form = hiGetCurrentForm() when(form errset(hiFormCancel(form))))
+    )))
+t
+''')
+    # Remove stale lock file
+    client.execute_skill(f'''
+let((libPath lockPath)
+  libPath = ddGetObj("{LIB}")~>writePath
+  when(libPath
+    lockPath = strcat(libPath "/{CELL}/maestro/maestro.sdb.cdslck")
+    when(isFile(lockPath) deleteFile(lockPath))
+  )
+)
+''')
+    time.sleep(0.5)
+
+
 def main() -> int:
     client = VirtuosoClient.from_env()
     print(f"[info] {LIB}/{CELL}")
     t_total = time.time()
 
-    # 0. Clean up residual sessions and windows
-    client.execute_skill('''
-foreach(s maeGetSessions() errset(maeCloseSession(?session s ?forceClose t)))
-foreach(win hiGetWindowList()
-  let((n) n = hiGetWindowName(win)
-    when(and(n rexMatchp("maestro" n))
-      errset(hiCloseWindow(win))
-      let((form) form = hiGetCurrentForm() when(form errset(hiFormCancel(form)))))))
-t
-''')
+    # 1. Ensure clean state
+    ensure_clean(client)
 
-    # 1. Start simulation (background session, async)
+    # 2. Start simulation (background, async)
     session = open_session(client, LIB, CELL)
     t0 = time.time()
     run_simulation(client, session=session)
     print(f"[sim] Started ({time.time() - t0:.1f}s)")
 
-    # 2. Wait for simulation (poll spectre processes, non-blocking)
+    # 3. Wait (poll spectre processes, non-blocking → LSCS parallel)
     print("[sim] Waiting...")
     wait_until_done(client, timeout=600)
-    elapsed_sim = time.time() - t0
-    print(f"[sim] Done ({elapsed_sim:.1f}s)")
+    print(f"[sim] Done ({time.time() - t0:.1f}s)")
 
-    # 3. Close background session, open GUI for reading results
+    # 4. Close background session
     close_session(client, session)
+
+    # 5. Open GUI read-only → read results
     client.execute_skill(
         f'deOpenCellView("{LIB}" "{CELL}" "maestro" "maestro" nil "r")')
-    client.execute_skill('maeMakeEditable()')
-    print("[gui] Maestro opened")
 
-    # Find GUI session
     r = client.execute_skill('''
 let((s) s = nil
   foreach(x maeGetSessions() unless(s when(maeGetSetup(?session x) s = x)))
@@ -82,7 +101,6 @@ let((s) s = nil
 ''')
     gui_session = (r.output or "").strip('"')
 
-    # 4. Read results
     print("\n=== Results ===")
     results = read_results(client, gui_session, lib=LIB, cell=CELL)
     if results:
@@ -90,16 +108,15 @@ let((s) s = nil
             print(f"[{key}] {expr}")
             print(f"  {raw}")
 
-    # 5. Export waveforms
-    output_dir = Path(__file__).parent / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Get history name from results
+    # 6. Export waveforms
     yield_expr = results.get("maeGetOverallYield", ("", ""))[0]
     hm = re.search(r'Interactive\.\d+', yield_expr)
     history = hm.group(0) if hm else ""
 
     if history:
+        output_dir = Path(__file__).parent / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
         print("\n=== Waveforms ===")
         mag_file = str(output_dir / "rc_ac_mag_db.txt")
         export_waveform(client, gui_session, 'dB20(mag(v("/OUT")))',
@@ -111,7 +128,6 @@ let((s) s = nil
                         phase_file, analysis="ac", history=history)
         print(f"AC phase: {phase_file}")
 
-        # Quick comparison
         data = parse_wave_file(mag_file)
         if data:
             print(f"\n=== {len(data)} frequency points ===")
@@ -129,14 +145,13 @@ let((s) s = nil
                     print(f"  f_3dB = {f_3db:.3e} Hz")
                     break
 
-    # 6. Restore latest history in GUI so user can see results
-    if history:
+        # 7. Make editable → restore history → save (so GUI shows results)
+        client.execute_skill('maeMakeEditable()')
         client.execute_skill(f'maeRestoreHistory("{history}")')
-        from virtuoso_bridge.virtuoso.maestro import save_setup
         save_setup(client, LIB, CELL)
         print(f"\n[gui] Showing {history}")
 
-    print(f"\n[total] {time.time() - t_total:.1f}s")
+    print(f"[total] {time.time() - t_total:.1f}s")
     return 0
 
 
