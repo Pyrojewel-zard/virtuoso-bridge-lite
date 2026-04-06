@@ -38,19 +38,21 @@ print(f"{'='*60}\n")
 
 
 # --- Test 1: simple multiline arithmetic ---
-r = client.execute_skill("(1\n+2\n+3)")
+skill_cmd = "(1\n+2\n+3)"
+r = client.execute_skill(skill_cmd)
 check("multiline arithmetic", r.output, "6")
 
 
 # --- Test 2: sprintf with escaped newlines ---
-r = client.execute_skill("""
+skill_cmd = """
 sprintf(nil "line1: %d\\nline2: %d\\nline3: %d" 10 20 30)
-""")
+"""
+r = client.execute_skill(skill_cmd)
 check("sprintf multiline string", "line1" in r.output, "True")
 
 
 # --- Test 3: let block with full-line comments ---
-r = client.execute_skill("""
+skill_cmd = """
 let((a b c)
     ; this is a comment
     a = 10
@@ -59,12 +61,13 @@ let((a b c)
     c = a + b
     c
 )
-""")
+"""
+r = client.execute_skill(skill_cmd)
 check("let + full-line comments", r.output, "30")
 
 
 # --- Test 4: for loop with comments ---
-r = client.execute_skill("""
+skill_cmd = """
 let((result)
     ; compute sum 1..10
     result = 0
@@ -74,12 +77,13 @@ let((result)
     ; return result
     result
 )
-""")
+"""
+r = client.execute_skill(skill_cmd)
 check("for loop + comments", r.output, "55")
 
 
 # --- Test 5: list operations ---
-r = client.execute_skill("""
+skill_cmd = """
 let((mylist filtered)
     ; create a list
     mylist = '(1 2 3 4 5 6 7 8 9 10)
@@ -87,22 +91,24 @@ let((mylist filtered)
     filtered = setof(x mylist (evenp x))
     sprintf(nil "%L" filtered)
 )
-""")
+"""
+r = client.execute_skill(skill_cmd)
 check("list filter", "(2 4 6 8 10)" in r.output, "True")
 
 
 # --- Test 6: string containing semicolons (must NOT be treated as comments) ---
-r = client.execute_skill("""
+skill_cmd = """
 let((s)
     s = "hello; world; test"
     strlen(s)
 )
-""")
+"""
+r = client.execute_skill(skill_cmd)
 check("string with semicolons", r.output, "18")
 
 
 # --- Test 7: inline comments ---
-r = client.execute_skill("""
+skill_cmd = """
 let((a b c d)
     a = 100       ; first value
     b = a * 2     ; double it
@@ -110,12 +116,13 @@ let((a b c d)
     d = c / 10    ; divide
     sprintf(nil "a=%d b=%d c=%d d=%d" a b c d)
 )
-""")
+"""
+r = client.execute_skill(skill_cmd)
 check("inline comments", "a=100 b=200 c=150 d=15" in r.output, "True")
 
 
 # --- Test 8: procedure definition and call ---
-r = client.execute_skill("""
+skill_cmd = """
 procedure(_vb_test_add(x y)
     ; add two numbers
     let((result)
@@ -124,7 +131,8 @@ procedure(_vb_test_add(x y)
     )
 )
 _vb_test_add(17 25)
-""")
+"""
+r = client.execute_skill(skill_cmd)
 check("procedure def + call", r.output, "42")
 
 
