@@ -28,8 +28,10 @@ _TUNNEL_STARTUP_SETTLE_SECONDS = 1.0
 _STATE_DIR = Path.home() / ".cache" / "virtuoso_bridge"
 
 
-def _is_localhost(host: str) -> bool:
+def _is_localhost(host: str | None) -> bool:
     """Return True if *host* refers to the local machine."""
+    if not host:
+        return False
     return host.strip().lower() in ("localhost", "127.0.0.1", "::1")
 
 
@@ -391,6 +393,8 @@ class SSHClient:
 
     def ensure_tunnel(self) -> None:
         """Ensure SSH tunnel is running, auto-retry on port conflict."""
+        if _is_localhost(self._remote_host):
+            return
         if self._ssh_runner.is_tunnel_alive:
             return
         if SSHRunner.can_reach_port(self._port):

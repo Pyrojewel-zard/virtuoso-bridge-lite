@@ -482,12 +482,20 @@ def cli_license() -> int:
         print(f"No tunnel running. {hint}")
         return 1
 
-    # Create SSHRunner with verbose=False to suppress [cmd] output
-    ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)
-    ssh._ssh_runner._verbose = False
-
+    from virtuoso_bridge.transport.tunnel import _is_localhost
     from virtuoso_bridge.spectre.runner import SpectreSimulator
-    sim = SpectreSimulator.from_env(profile=profile, ssh_runner=ssh._ssh_runner)
+
+    suffix = f"_{profile}" if profile else ""
+    configured_host = os.getenv(f"VB_REMOTE_HOST{suffix}", "").strip()
+
+    if _is_localhost(configured_host):
+        sim = SpectreSimulator.from_env(profile=profile)
+    else:
+        # Create SSHRunner with verbose=False to suppress [cmd] output
+        ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)
+        ssh._ssh_runner._verbose = False
+        sim = SpectreSimulator.from_env(profile=profile, ssh_runner=ssh._ssh_runner)
+
     info = sim.check_license()
 
     print(f"[spectre] {info.get('spectre_path', 'NOT FOUND')}")
