@@ -251,31 +251,18 @@ def run_simulation(client: VirtuosoClient, *, session: str = "") -> str:
     return _q(client, f'maeRunSimulation({s.strip()})')
 
 
-def wait_until_done(client: VirtuosoClient, timeout: int = 600,
-                    poll_interval: float = 2.0) -> None:
-    """Poll until simulation finishes. Does NOT block the SKILL channel.
+def wait_until_done(client: VirtuosoClient, timeout: int = 600) -> str:
+    """Wait until simulation finishes.
 
-    Uses maeGetNumberOfExecutedRuns() to check progress every poll_interval
-    seconds. The SKILL channel stays free between polls, so Virtuoso's event
-    loop (and parallel simulation) runs unimpeded.
+    Uses maeWaitUntilDone('All) which blocks the SKILL channel until
+    all simulations complete. This is the only reliable method — polling
+    via maeGetNumberOfExecutedRuns() does not work in background sessions.
 
-    Args:
-        timeout: max seconds to wait before raising TimeoutError
-        poll_interval: seconds between polls (default 2s)
+    The simulation itself still runs in parallel on the server (if LSCS
+    job control is enabled). Only the SKILL channel is blocked.
     """
-    import time
-    start = time.time()
-    while True:
-        r = client.execute_skill('maeGetNumberOfExecutedRuns()')
-        count = (r.output or "").strip('"')
-        # maeGetNumberOfExecutedRuns returns 0 while running, >0 when done
-        if count and count != "0" and count != "nil":
-            return
-        if time.time() - start > timeout:
-            raise TimeoutError(
-                f"Simulation not done after {timeout}s "
-                f"(maeGetNumberOfExecutedRuns={count})")
-        time.sleep(poll_interval)
+    return client.execute_skill(
+        "maeWaitUntilDone('All)", timeout=timeout).output or ""
 
 
 # ---------------------------------------------------------------------------
