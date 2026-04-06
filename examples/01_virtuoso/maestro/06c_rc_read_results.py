@@ -50,7 +50,7 @@ def main() -> int:
         return 1
 
     # Export waveforms
-    output_dir = Path("output")
+    output_dir = Path(__file__).parent / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("\n=== Waveforms ===")
@@ -81,10 +81,13 @@ def main() -> int:
                 print(f"  f_3dB = {f_3db:.3e} Hz")
                 break
 
-    # Open GUI
+    # Open GUI (may fail if dialog pops up — not critical)
     close_session(client, session)
-    history = open_maestro_gui_with_history(client, LIB, CELL)
-    print(f"\nMaestro opened with {history}")
+    try:
+        history = open_maestro_gui_with_history(client, LIB, CELL)
+        print(f"\nMaestro opened with {history}")
+    except Exception as e:
+        print(f"\nGUI open skipped: {e}")
     return 0
 
 
