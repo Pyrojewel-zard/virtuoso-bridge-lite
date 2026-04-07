@@ -143,10 +143,19 @@ class SSHRunner:
 
         # ControlMaster socket path for SSH connection multiplexing.
         # All ssh/scp calls to the same host reuse one TCP connection.
-        # Use tempfile.gettempdir() for cross-platform compatibility (Windows has no /tmp).
+        # Disabled on Windows: Windows OpenSSH does not support Unix domain
+        # sockets required by ControlMaster.  Users can also force-disable
+        # via VB_DISABLE_CONTROL_MASTER=1.
+        _disable_cm = os.environ.get("VB_DISABLE_CONTROL_MASTER", "").strip().lower() in ("1", "true", "yes")
+        _force_cm = os.environ.get("VB_FORCE_CONTROL_MASTER", "").strip().lower() in ("1", "true", "yes")
+        self._use_control_master = _force_cm or ((os.name != "nt") and (not _disable_cm))
+
         _user_part = user or "default"
         _tmp = tempfile.gettempdir()
         self._control_path = f"{_tmp}/vb_ssh_{_user_part}@{host}:{jump_host or 'direct'}"
+
+        if not self._use_control_master:
+            logger.debug("ControlMaster disabled (os=%s, env_override=%s)", os.name, _disable_cm)
 
         self._shell_proc: subprocess.Popen[bytes] | None = None
         self._shell_queue: queue.Queue[str | None] | None = None
@@ -261,7 +270,7 @@ class SSHRunner:
         process.
         """
         # Try ControlMaster exit first
-        if Path(self._control_path).exists():
+        if self._use_control_master and Path(self._control_path).exists():
             cmd = [self._ssh_cmd, "-o", f"ControlPath={self._control_path}", "-O", "exit"]
             if self._user:
                 cmd.append(f"{self._user}@{self._host}")
@@ -1014,10 +1023,13 @@ class SSHRunner:
             "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=no",
             "-o", f"ConnectTimeout={self._connect_timeout}",
-            "-o", "ControlMaster=auto",
-            "-o", f"ControlPath={self._control_path}",
-            "-o", "ControlPersist=3600",
         ]
+        if self._use_control_master:
+            opts += [
+                "-o", "ControlMaster=auto",
+                "-o", f"ControlPath={self._control_path}",
+                "-o", "ControlPersist=3600",
+            ]
         if self._ssh_config_path:
             opts += ["-F", str(self._ssh_config_path)]
         if self._ssh_key_path:
