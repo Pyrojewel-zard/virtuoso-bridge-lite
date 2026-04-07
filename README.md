@@ -17,28 +17,23 @@
   <img src="https://img.shields.io/badge/AI%20Native-agent--driven-blueviolet" alt="AI Native"/>
 </p>
 
-Bridge between LLM-Agent and Cadence Virtuoso. One agent controls one or more Virtuoso instances, locally or remotely.
+A new infrastructure for **Agentic Analog and Mixed-Signal Design**. LLM Agents drive Cadence Virtuoso instances — locally or remotely — turning tedious handcrafting into automated design flows.
 
-### Why use this?
+### Why is this a "New Infrastructure"?
 
-**1. Rich Virtuoso integration** — Three levels of SKILL interaction, four design domains.
-- **Three ways to program**: load `.il` files, execute inline SKILL, or use Python APIs — your choice
-- **Schematic**: create circuits, wire instances, read connectivity, import CDL
-- **Layout**: shapes, vias, routing, read-back geometry, mosaic arrays
-- **Maestro**: read/write simulation setups, run simulations with non-blocking completion detection, collect results and export waveforms
-- **Spectre**: standalone netlist-driven simulation with PSF result parsing
+**1. Deep Virtuoso Integration** — Control across Schematic, Layout, Maestro, and Spectre.
+- **Flexible programming**: execute inline SKILL, load `.il` files, or use Python APIs
+- **Four design domains**: schematic editing, layout generation, simulation setup (Maestro), and standalone Spectre with PSF parsing
 
-**2. Multi-server, multi-user** — One machine controls multiple Virtuoso instances simultaneously.
+**2. Scalable Architecture** — Multi-server, multi-session, built for distributed design clusters.
 - Multi-profile SSH: connect to N design servers, each with independent tunnel
 - Run parallel simulations across servers and accounts
-- Foundation for scaling analog design automation across teams and compute resources
 - Verified across macOS, Windows, and Linux
 
-**3. AI-native** — Built for coding agents (Claude Code, Cursor, etc.) to drive Virtuoso.
+**3. AI-Native Design** — Built for coding agents (Claude Code, Cursor, etc.) to drive Virtuoso.
 - CLI-first: `virtuoso-bridge start/status/restart`, no GUI needed
-- Ships with agent skill files (`skills/`) — the agent knows how to use the bridge immediately
-- Persistent SSH tunnel for high-frequency agent interactions
-- All SKILL commands logged with timestamps to CIW for full traceability
+- Ships with pre-defined agent skill files (`skills/`) — the agent knows how to use the bridge immediately
+- Optimized for high-frequency agent interactions with persistent SSH tunnels
 
 > **If you are an AI agent**, read [`AGENTS.md`](AGENTS.md) first and follow its setup checklist.
 
