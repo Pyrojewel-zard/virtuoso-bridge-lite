@@ -47,11 +47,11 @@ Always use the highest level that works. Drop to a lower level only when needed.
 
 ### Environment setup
 
-> **Always use `uv` + virtual environment.** Never install into the global Python. `uv` refuses global installs by default, preventing accidental pollution.
+> **`virtuoso-bridge` is a Python CLI.** Use `uv` + virtual environment — never install into the global Python.
 
 ```bash
 uv venv .venv && source .venv/bin/activate   # Windows: source .venv/Scripts/activate
-uv pip install -e .
+uv pip install -e virtuoso-bridge-lite
 ```
 
 All `virtuoso-bridge` CLI commands and Python scripts must run inside the activated venv.
@@ -139,6 +139,7 @@ Load on demand — each contains detailed API docs and edge-case guidance:
 | `references/maestro-skill-api.md` | mae* SKILL functions, OCEAN, corners, known blockers |
 | `references/maestro-python-api.md` | Session, read_config (verbose 0/1/2), writer functions |
 | `references/netlist.md` | CDL/Spectre netlist formats, spiceIn import |
+| `references/troubleshooting.md` | Known gotchas, GUI blocking, CDF quirks, connection issues |
 
 ## Examples
 
@@ -349,6 +350,12 @@ from virtuoso_bridge.virtuoso.schematic.reader import read_connectivity
 connectivity = read_connectivity(client, LIB, CELL)
 # connectivity = {"instances": [...], "nets": [...], "pins": [...]}
 
+# 1b. Schematic — read instance parameters (W, L, nf, m, etc.)
+from virtuoso_bridge.virtuoso.schematic.reader import read_instance_params
+params = read_instance_params(client, LIB, CELL, filter_params=["w", "l", "nf", "m"])
+# params = [{"name": "M0", "lib": "tsmcN28", "cell": "pch_mac",
+#            "params": {"w": "500n", "l": "30n", "nf": "1", "m": "1"}}, ...]
+
 # 2. Maestro — open GUI, read config, close
 client.open_window(LIB, CELL, view="schematic")  # must open schematic first
 r = client.execute_skill(f'''
@@ -426,11 +433,7 @@ This reveals dialog boxes, error messages, or unexpected variable values that ar
 
 ### Gotchas
 
-- **`csh()` returns `t`/`nil`**, not command output. Never use it to verify files. Use `download_file` (SSH/SCP) for all remote file operations.
-- **`procedurep()` returns `nil` for compiled functions** like `maeCreateNetlistForCorner`. The function still exists — test by calling it with wrong args instead.
-- **Netlist files are on the remote.** `maeCreateNetlistForCorner` writes to the remote filesystem. Always use `client.download_file()` to retrieve them.
-- **Design variables:** `maeGetSetup(?typeName "globalVar")` may return nil. Use `asiGetDesignVarList(asiGetCurrentSession())` instead.
-- **Global vs test-level variables:** `maeSetVar("f" "1G")` sets a global variable. To set a test-level variable, use `?typeName "test"`: `maeSetVar("f" "1G" ?typeName "test" ?typeValue '("IB_PSS"))`. If the test has a local variable, it overrides the global one.
+See `references/troubleshooting.md` for a searchable list of known pitfalls (GUI dialog blocking, CDF vs `inst~>prop`, `csh()` return values, Maestro variable quirks, connection issues, etc.). When something fails unexpectedly, search that file by keyword before debugging from scratch.
 
 ### axl* API — variable management
 

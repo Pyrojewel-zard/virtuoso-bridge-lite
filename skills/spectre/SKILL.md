@@ -9,9 +9,10 @@ Upload a `.scs` netlist to a remote machine via SSH, run Spectre, download and p
 
 ## Before you start
 
-1. `virtuoso-bridge status` — check connection, Spectre path, license
-2. Check `examples/02_spectre/` — use existing examples as a basis
-3. `.env` must have `VB_CADENCE_CSHRC` set (can live in project root or virtuoso-bridge-lite dir)
+1. **`virtuoso-bridge` is a Python CLI** — installed via `pip install -e virtuoso-bridge-lite`.
+2. `virtuoso-bridge status` — check connection, Spectre path, license
+3. Check `examples/02_spectre/` — use existing examples as a basis
+4. `.env` must have `VB_CADENCE_CSHRC` set (can live in project root or virtuoso-bridge-lite dir)
 
 ## Core pattern
 

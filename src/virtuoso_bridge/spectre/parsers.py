@@ -80,6 +80,7 @@ def parse_psf_ascii_directory(output_dir: Path) -> dict[str, Any]:
         "tran.tran.tran",
         "tran.tran",
     )
+    tran_found = False
     for candidate in tran_candidates:
         tran_file = output_dir / candidate
         if tran_file.exists():
@@ -91,7 +92,19 @@ def parse_psf_ascii_directory(output_dir: Path) -> dict[str, Any]:
                     tran_file.name,
                     len(result.data),
                 )
+            tran_found = True
             break
+    if not tran_found:
+        for tran_file in sorted(output_dir.glob("*.tran.tran")):
+            result = parse_spectre_psf_ascii(tran_file)
+            if result.data:
+                merged_data.update(result.data)
+                logger.debug(
+                    "Parsed transient data from %s: %d signals",
+                    tran_file.name,
+                    len(result.data),
+                )
+                break
 
     dc_candidates = ["dc.dc", "dcOp.dc", "spectre.dc"]
     dc_parsed = False
@@ -146,6 +159,7 @@ def parse_psf_ascii_directory(output_dir: Path) -> dict[str, Any]:
             break
 
     ac_candidates = ("ac.ac", "ac.ac.ac")
+    ac_found = False
     for candidate in ac_candidates:
         ac_file = output_dir / candidate
         if ac_file.exists():
@@ -158,7 +172,20 @@ def parse_psf_ascii_directory(output_dir: Path) -> dict[str, Any]:
                     ac_file.name,
                     len(result.data),
                 )
+            ac_found = True
             break
+    if not ac_found:
+        for ac_file in sorted(output_dir.glob("*.ac.ac")):
+            result = parse_spectre_psf_ascii(ac_file)
+            if result.data:
+                for key, val in result.data.items():
+                    merged_data[f"ac_{key}"] = val
+                logger.debug(
+                    "Parsed AC data from %s: %d signals",
+                    ac_file.name,
+                    len(result.data),
+                )
+                break
 
     for info_file in sorted(output_dir.rglob("*.info")):
         result = parse_spectre_psf_ascii(info_file)
