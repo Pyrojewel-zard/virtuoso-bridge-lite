@@ -284,8 +284,8 @@ client.open_window(LIB, CELL, view="schematic")
 placement = read_placement(client)
 
 # Also read connectivity for net names
-client.load_il("virtuoso-bridge-lite/examples/01_virtuoso/assets/read_connectivity.il")
-r = client.execute_skill(f'ReadSchematic("{LIB}" "{CELL}")')
+from virtuoso_bridge.virtuoso.schematic.reader import read_connectivity
+connectivity = read_connectivity(client, LIB, CELL)
 ```
 
 **Step 2: Map to grid** — analyze relative positions, assign (col, row) on a uniform grid:
@@ -344,10 +344,10 @@ from virtuoso_bridge.virtuoso.maestro import read_config
 client = VirtuosoClient.from_env()
 LIB, CELL = "myLib", "myCell"
 
-# 1. Schematic — structured data via IL helper
-client.load_il("examples/01_virtuoso/assets/read_connectivity.il")
-r = client.execute_skill(f'ReadSchematic("{LIB}" "{CELL}")')
-# r.output is a SKILL list: (("lib" ...) ("instances" ...) ("nets" ...) ("pins" ...))
+# 1. Schematic — read connectivity
+from virtuoso_bridge.virtuoso.schematic.reader import read_connectivity
+connectivity = read_connectivity(client, LIB, CELL)
+# connectivity = {"instances": [...], "nets": [...], "pins": [...]}
 
 # 2. Maestro — open GUI, read config, close
 client.open_window(LIB, CELL, view="schematic")  # must open schematic first
