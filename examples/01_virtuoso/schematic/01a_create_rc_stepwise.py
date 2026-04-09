@@ -25,7 +25,6 @@ from virtuoso_bridge.virtuoso.schematic.ops import (
     schematic_create_inst_by_master_name as inst,
     schematic_label_instance_term as label_term,
 )
-from virtuoso_bridge.virtuoso.schematic.params import set_instance_params
 
 
 def main() -> int:
@@ -60,8 +59,10 @@ def _create(client: VirtuosoClient, lib: str, cell: str) -> None:
         sch.add(label_term("C0", "MINUS", "GND"))
         # schCheck + dbSave happen on context exit
 
-    # Set VDC = 0.8 V (after save, so CDF is available)
-    set_instance_params(client, "V0", vdc="800m")
+    # Set VDC = 0.8 V via schHiReplace (analogLib CDF param)
+    client.execute_skill(
+        'schHiReplace(?replaceAll t ?propName "cellName" ?condOp "==" '
+        '?propValue "vdc" ?newPropName "vdc" ?newPropValue "800m")')
 
     client.open_window(lib, cell, view="schematic")
     print(f"Created {lib}/{cell}/schematic")

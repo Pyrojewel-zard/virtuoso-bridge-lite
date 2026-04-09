@@ -27,6 +27,7 @@ let((win lib cell ddcell)
   unless(win return("ERROR: no schematic window open"))
   lib = win~>cellView~>libName
   cell = win~>cellView~>cellName
+  dbSave(win~>cellView)
   hiCloseWindow(win)
   ddcell = ddGetObj(lib cell)
   if(ddcell
