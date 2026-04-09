@@ -4,6 +4,7 @@
 Edit LIB and CELL below.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -12,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 from virtuoso_bridge import VirtuosoClient
 from virtuoso_bridge.virtuoso.maestro import read_config
 
-LIB  = "PLAYGROUND_AMP"
+LIB  = sys.argv[1] if len(sys.argv) >= 2 else os.environ.get("VB_DEFAULT_LIB", "PLAYGROUND_AMP")
 CELL = "TB_AMP_5T_D2S_DC_AC"
 
 

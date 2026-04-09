@@ -11,6 +11,7 @@ Prerequisites:
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -24,7 +25,7 @@ ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
 
 def main() -> int:
-    lib  = sys.argv[1] if len(sys.argv) >= 2 else "PLAYGROUND_LLM"
+    lib  = sys.argv[1] if len(sys.argv) >= 2 else os.environ.get("VB_DEFAULT_LIB", "PLAYGROUND_LLM")
     cell = f"tmp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     client = VirtuosoClient.from_env()
 

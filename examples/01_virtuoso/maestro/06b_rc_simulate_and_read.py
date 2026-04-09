@@ -7,6 +7,7 @@ Can be run multiple times — each run starts a new simulation.
 Prerequisite: run 06a_rc_create.py first.
 """
 
+import os
 import re
 import sys
 import time
@@ -19,7 +20,7 @@ from virtuoso_bridge.virtuoso.maestro import (
     read_results, export_waveform, save_setup, wait_until_done,
 )
 
-LIB = "PLAYGROUND_LLM"
+LIB = sys.argv[1] if len(sys.argv) >= 2 else os.environ.get("VB_DEFAULT_LIB", "PLAYGROUND_LLM")
 CELL = "TB_RC_FILTER"
 
 

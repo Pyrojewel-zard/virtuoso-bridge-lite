@@ -35,7 +35,7 @@ def _decode(raw: str) -> str:
 
 
 def main() -> int:
-    lib  = os.environ.get("VB_DEFAULT_LIB", "PLAYGROUND_LLM")
+    lib  = sys.argv[1] if len(sys.argv) >= 2 else os.environ.get("VB_DEFAULT_LIB", "PLAYGROUND_LLM")
     cell = f"rc_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     client = VirtuosoClient.from_env()
 
