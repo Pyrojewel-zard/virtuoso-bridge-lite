@@ -83,6 +83,77 @@ results = read_results(client, session, lib=LIB, cell=CELL, history=history)
 
 The SKILL channel remains **completely free** during the wait — you can execute_skill, dismiss dialogs, take screenshots, read config, etc.
 
+## Detecting Maestro session state
+
+There is **no direct SKILL API** to query whether a Maestro session is read-only, editable, or has unsaved changes. The `axl*` and `mae*` APIs (e.g. `maeIsEditable`, `axlGetSetupMode`) all return `nil`.
+
+The only reliable method is parsing the **window title** via `hiGetWindowName`:
+
+```python
+r = client.execute_skill('''
+foreach(mapcar w hiGetWindowList()
+  let((s name)
+    s = car(errset(axlGetWindowSession(w)))
+    name = hiGetWindowName(w)
+    when(s list(s name))))
+''')
+```
+
+| Title pattern | State |
+|---------------|-------|
+| `...Assembler Editing: LIB CELL maestro` | Editable, no unsaved changes |
+| `...Assembler Editing: LIB CELL maestro*` | Editable, **has unsaved changes** (trailing `*`) |
+| `...Assembler Reading: LIB CELL maestro` | Read-only |
+
+Use this before calling `maeMakeEditable()` to avoid ASSEMBLER-8127 deadlock.
+
+## Closing Maestro sessions
+
+### GUI-opened sessions (`maeCloseSession` won't work)
+
+Sessions opened via the Virtuoso GUI (File → Open) **cannot be closed** with `maeCloseSession` — it returns ASSEMBLER-8051. You must close the GUI window:
+
+```python
+# Save first if modified (check for trailing * in title)
+client.execute_skill(f'maeSaveSetup(?lib "{LIB}" ?cell "{CELL}" ?view "maestro" ?session "{session}")')
+
+# Close by finding the window with matching session
+client.execute_skill(f'''
+foreach(w hiGetWindowList()
+  when(car(errset(axlGetWindowSession(w))) == "{session}"
+    hiCloseWindow(w)))
+''')
+```
+
+### Background sessions (`maeOpenSetup`)
+
+These can be closed with `maeCloseSession`:
+
+```python
+client.execute_skill(f'maeCloseSession(?session "{session}" ?forceClose t)')
+```
+
+### Clean up all sessions
+
+```python
+# Close GUI windows first (saves modified ones)
+client.execute_skill('''
+foreach(w hiGetWindowList()
+  let((s name)
+    s = car(errset(axlGetWindowSession(w)))
+    when(s
+      name = hiGetWindowName(w)
+      when(name && rexMatchp("\\*$" name)
+        maeSaveSetup(?session s))
+      hiCloseWindow(w))))
+''')
+
+# Then close any remaining background sessions
+client.execute_skill('''
+foreach(s maeGetSessions() maeCloseSession(?session s ?forceClose t))
+''')
+```
+
 ## Common pitfalls
 
 | Pitfall | Symptom | Fix |
@@ -91,8 +162,10 @@ The SKILL channel remains **completely free** during the wait — you can execut
 | Skipping step 3 | `maeRunSimulation` returns error | Must `maeMakeEditable()` after `deOpenCellView` |
 | Using `open_session` for simulation | `wait_until_done` returns immediately | Use GUI mode (steps 2-3), not background |
 | Skipping `save_setup` | Simulation uses stale parameters | Always save before running |
-| Calling `maeMakeEditable` when another session has edit lock | ASSEMBLER-8127 dialog deadlocks SKILL channel | Close the other session first, or work in that session |
-| `maeCloseResults` leaves Maestro read-only | Next `maeRunSimulation` fails | This is expected; re-run `maeMakeEditable()` if needed (check for edit lock first) |
+| Calling `maeMakeEditable` when another session has edit lock | ASSEMBLER-8127 dialog deadlocks SKILL channel | Check window title first; close the other session or work in it |
+| `maeCloseResults` leaves Maestro read-only | Next `maeRunSimulation` fails | Re-run `maeMakeEditable()` (check for edit lock first) |
+| `maeCloseSession` on GUI-opened session | ASSEMBLER-8051: "opened from UI" | Close via `hiCloseWindow` instead |
+| `window:N` in multi-line SKILL | `unbound variable - window` | Use `foreach(w hiGetWindowList() ...)` to find windows by `w~>windowNum` |
 
 ## Optimization loops
 
