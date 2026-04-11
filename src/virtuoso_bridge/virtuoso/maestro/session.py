@@ -16,6 +16,43 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# X11 key sending (for dismissing dialogs that block SKILL)
+# ---------------------------------------------------------------------------
+
+def _send_x11_key(runner, keysym: int) -> None:
+    """Send a single keypress to the Virtuoso X11 display via SSH.
+
+    Uses python2.7 + ctypes on the remote (works even without python3).
+    Display is auto-detected from VB_DISPLAY env or defaults to
+    querying the Virtuoso process environment.
+    """
+    import os
+    display = os.getenv("VB_DISPLAY", "")
+    if not display:
+        # Try to detect from virtuoso process
+        r = runner.run_command(
+            'strings /proc/$(pgrep -u $(whoami) -f "64bit/virtuoso" | head -1)/environ 2>/dev/null '
+            '| grep ^DISPLAY= | head -1',
+            timeout=5)
+        display = (r.stdout or "").strip().replace("DISPLAY=", "")
+    if not display:
+        logger.warning("Cannot detect DISPLAY for X11 key sending")
+        return
+
+    runner.run_command(
+        f'DISPLAY={display} python2.7 -c "'
+        f'import ctypes,ctypes.util;'
+        f'xlib=ctypes.cdll.LoadLibrary(ctypes.util.find_library(chr(88)+chr(49)+chr(49)));'
+        f'xtst=ctypes.cdll.LoadLibrary(ctypes.util.find_library(chr(88)+chr(116)+chr(115)+chr(116)));'
+        f'dpy=xlib.XOpenDisplay(None);'
+        f'kc=xlib.XKeysymToKeycode(dpy,{keysym});'
+        f'xtst.XTestFakeKeyEvent(dpy,kc,True,0);'
+        f'xtst.XTestFakeKeyEvent(dpy,kc,False,0);'
+        f'xlib.XFlush(dpy);xlib.XCloseDisplay(dpy)"',
+        timeout=5)
+
+
+# ---------------------------------------------------------------------------
 # Session state detection
 # ---------------------------------------------------------------------------
 
@@ -185,12 +222,15 @@ def close_gui_session(client: VirtuosoClient, session: str,
     Checks window state before closing:
     - Editing with changes: saves first (if save=True), then closes
     - Editing without changes: closes directly
-    - Reading with changes: closes without saving (discards changes)
+    - Reading with changes + no other Editing session: promote to
+      editable, save, then close
+    - Reading with changes + another Editing session exists: close
+      and discard changes (dismiss save dialog)
     - Reading without changes: closes directly
 
     Args:
-        save: if True and session is Editing with unsaved changes,
-              save before closing. If False, discard changes.
+        save: if True and session has unsaved changes, attempt to
+              save before closing. If False, always discard changes.
     """
     windows = _get_session_windows(client)
     target_window = None
@@ -205,45 +245,71 @@ def close_gui_session(client: VirtuosoClient, session: str,
         client.execute_skill(f'maeCloseSession(?session "{session}" ?forceClose t)')
         return
 
-    if target_window["mode"] == "editing" and target_window["modified"] and save:
-        # Save before closing
-        logger.info("Saving modified session %s before closing", session)
-        r = client.execute_skill(f'''
-let((db)
-  db = axlGetMainSetupDB("{session}")
-  maeSaveSetup(?session "{session}"))
-''')
-        if r.errors:
-            logger.warning("maeSaveSetup failed: %s", r.errors)
+    if target_window["modified"] and save:
+        if target_window["mode"] == "editing":
+            # Editing* — save, then close
+            logger.info("Saving modified Editing session %s", session)
+            client.execute_skill(f'maeSaveSetup(?session "{session}")')
+        else:
+            # Reading* — check if we can promote to editable
+            other_editing = any(
+                w["mode"] == "editing" and w["session"] != session
+                for w in windows
+            )
+            if not other_editing:
+                # No conflict — promote to editable, save, close
+                logger.info("Promoting Reading* session %s to editable for save", session)
+                r = client.execute_skill('maeMakeEditable()', timeout=10)
+                if not r.errors:
+                    client.execute_skill(f'maeSaveSetup(?session "{session}")')
+                else:
+                    logger.warning("maeMakeEditable failed, will discard changes: %s", r.errors)
+            else:
+                # Another session holds edit lock — must discard
+                logger.info("Reading* session %s has conflicts, discarding changes", session)
 
-    _close_gui_window(client, target_window)
+    _close_gui_window(client, target_window, windows)
     logger.info("Closed GUI session: %s", session)
 
 
-def _close_gui_window(client: VirtuosoClient, window_info: dict) -> None:
-    """Close a GUI window, handling the save dialog for Reading* state."""
-    wnum = window_info["window_num"]
-    is_reading_modified = (window_info["mode"] == "reading" and window_info["modified"])
+def _close_gui_window(client: VirtuosoClient, window_info: dict,
+                      all_windows: list[dict] | None = None) -> None:
+    """Close a GUI window, handling save dialogs safely.
 
-    if is_reading_modified:
-        # Reading with changes: hiCloseWindow will pop a save dialog.
-        # We need to dismiss it with "No" (discard).
-        # Use hiCloseWindow, then the dialog auto-appears — dismiss via
-        # hiFormDone or the dismiss_dialog mechanism.
-        # Safest: send the close, then immediately send Alt+N (No) via X11.
-        # For now: use hiFormDone approach in a single SKILL call.
-        client.execute_skill(f'''
-let((w found)
-  foreach(win hiGetWindowList()
-    when(win~>windowNum == {wnum} w = win))
-  when(w hiCloseWindow(w))
-  ; Try to dismiss the save dialog
-  errset(hiFormDone(hiGetCurrentForm())))
-''', timeout=10)
-    else:
-        client.execute_skill(f'''
+    If the window has unsaved changes (*), hiCloseWindow pops a save
+    dialog that blocks the SKILL channel. We pre-empt this by starting
+    an X11 key-sender in a background thread BEFORE calling hiCloseWindow.
+    The thread sends Escape (for Save As) or Alt+N (for Yes/No) to
+    dismiss the dialog as soon as it appears.
+    """
+    import threading
+    import time as _time
+
+    wnum = window_info["window_num"]
+    will_pop_dialog = window_info["modified"]
+
+    dismiss_thread = None
+    if will_pop_dialog:
+        runner = client.ssh_runner
+        if runner is not None:
+            def _dismiss_save_dialog():
+                """Send Escape after a short delay to dismiss save dialog."""
+                _time.sleep(0.5)
+                # Escape dismisses both "Save As" and "Save changes?" dialogs
+                _send_x11_key(runner, 0xff1b)  # Escape
+                _time.sleep(0.3)
+                _send_x11_key(runner, 0xff1b)  # Escape again (in case of nested dialog)
+
+            dismiss_thread = threading.Thread(target=_dismiss_save_dialog, daemon=True)
+            dismiss_thread.start()
+            logger.info("Started dismiss thread for modified window %d", wnum)
+
+    client.execute_skill(f'''
 let((w)
   foreach(win hiGetWindowList()
     when(win~>windowNum == {wnum} w = win))
   when(w hiCloseWindow(w)))
-''', timeout=10)
+''', timeout=15)
+
+    if dismiss_thread is not None:
+        dismiss_thread.join(timeout=10)

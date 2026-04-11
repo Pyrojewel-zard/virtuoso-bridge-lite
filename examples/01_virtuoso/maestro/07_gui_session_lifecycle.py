@@ -181,6 +181,80 @@ if windows:
 close_gui_session(client, session)
 
 # =========================================================================
+print("\n=== Test 6: Close Reading* with no edit conflict (promote+save) ===")
+# Open as reading
+client.execute_skill(
+    f'deOpenCellView("{LIB}" "{CELL}" "maestro" "maestro" nil "r")')
+time.sleep(0.5)
+
+session = decode_skill_output(
+    client.execute_skill('car(maeGetSessions())').output)
+
+# Make a change -> Reading*
+client.execute_skill(f'maeSetVar("_vb_test_var2" "888" ?session "{session}")')
+time.sleep(0.5)
+
+windows = _get_session_windows(client)
+if windows:
+    check("Reading* state", windows[0]["mode"] == "reading" and windows[0]["modified"],
+          f"mode={windows[0]['mode']} modified={windows[0]['modified']}")
+
+# close_gui_session should promote to editable, save, then close
+close_gui_session(client, session, save=True)
+sessions = get_sessions()
+check("Session closed after promote+save", len(sessions) == 0, f"sessions={sessions}")
+
+# Verify SKILL channel is alive (no dialog stuck)
+r = client.execute_skill('1+1', timeout=5)
+check("SKILL channel alive", r.output == "2", f"got {r.output}")
+
+# Clean up test variable
+temp = open_gui_session(client, LIB, CELL)
+client.execute_skill(f'''
+errset(axlRemoveElement(axlGetVar(axlGetMainSetupDB("{temp}") "_vb_test_var2")))
+''')
+client.execute_skill(f'maeSaveSetup(?lib "{LIB}" ?cell "{CELL}" ?view "maestro" ?session "{temp}")')
+close_gui_session(client, temp)
+
+# =========================================================================
+print("\n=== Test 7: Close Reading* with edit conflict (defensive) ===")
+# This should not happen in normal use, but code must handle it safely.
+# Open one as editing (holds edit lock)
+editing_session = open_gui_session(client, LIB, CELL)
+check("Editing session opened", editing_session is not None)
+
+# Open another as reading (second window — abnormal state)
+client.execute_skill(
+    f'deOpenCellView("{LIB}" "{CELL}" "maestro" "maestro" nil "r")')
+time.sleep(0.5)
+
+windows = _get_session_windows(client)
+reading_windows = [w for w in windows if w["mode"] == "reading"]
+check("Have reading window", len(reading_windows) == 1, f"got {len(reading_windows)}")
+
+if reading_windows:
+    reading_session = reading_windows[0]["session"]
+    # Make a change in reading session -> Reading*
+    client.execute_skill(f'maeSetVar("_vb_test_var3" "777" ?session "{reading_session}")')
+    time.sleep(0.5)
+
+    # close_gui_session should discard changes (can't promote, edit lock held)
+    close_gui_session(client, reading_session, save=True)
+
+    # Verify SKILL channel is alive (no dialog stuck)
+    r = client.execute_skill('1+1', timeout=5)
+    check("SKILL channel alive after discard", r.output == "2", f"got {r.output}")
+
+    # Only editing session should remain
+    sessions = get_sessions()
+    check("Only editing session remains",
+          len(sessions) == 1 and editing_session in sessions,
+          f"sessions={sessions}")
+
+# Clean up
+close_gui_session(client, editing_session)
+
+# =========================================================================
 print(f"\n{'='*60}")
 print(f"Results: {passed} passed, {failed} failed")
 print(f"{'='*60}")
