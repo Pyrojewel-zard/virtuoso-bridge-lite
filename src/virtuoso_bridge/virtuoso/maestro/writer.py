@@ -268,33 +268,94 @@ def set_job_policy(client: VirtuosoClient, policy, *,
     return _q(client, parts)
 
 
-def run_simulation(client: VirtuosoClient, *, session: str = "") -> str:
+def run_simulation(client: VirtuosoClient, *, session: str = "",
+                   callback: str = "") -> str:
     """maeRunSimulation — run simulation (async, returns immediately).
 
-    Returns the run name (e.g. "Interactive.1").
-    Follow with wait_until_done() to wait for completion.
+    Returns the history name (e.g. "Interactive.1").
 
-    IMPORTANT: The maestro must be opened in GUI mode (deOpenCellView +
-    maeMakeEditable) for wait_until_done to block properly. Background
-    sessions (maeOpenSetup) cause maeWaitUntilDone to return immediately,
-    and maeCloseSession will cancel any in-flight simulation.
+    Args:
+        session: session name (default: current session)
+        callback: SKILL procedure name to call when run finishes
     """
-    s = f' ?session "{session}"' if session else ""
-    return _q(client, f'maeRunSimulation({s.strip()})')
+    parts = "maeRunSimulation("
+    if session:
+        parts += f'?session "{session}" '
+    if callback:
+        parts += f'?callback "{callback}" '
+    parts = parts.rstrip() + ")"
+    return _q(client, parts)
 
 
-def wait_until_done(client: VirtuosoClient, timeout: int = 600) -> str:
-    """Wait until simulation finishes.
+def wait_until_done(client: VirtuosoClient, timeout: int = 600,
+                    _marker: str = "") -> str:
+    """Wait for a simulation that was started with run_and_wait().
 
-    Uses maeWaitUntilDone('All) which blocks the SKILL call until all
-    sweep points complete. The bridge daemon's watchdog handles timeout.
+    Polls a marker file via SSH without blocking the SKILL channel.
+    Prefer run_and_wait() which handles everything automatically.
 
-    Must be called AFTER maeRunSimulation() while a GUI session is open.
-    In background sessions (maeOpenSetup), this returns immediately.
-
-    Returns the raw SKILL output.
+    Args:
+        _marker: internal marker path (set by run_and_wait)
     """
-    return _q(client, "maeWaitUntilDone('All)", timeout=timeout)
+    import time as _time
+
+    if not _marker:
+        raise ValueError("No marker path. Use run_and_wait() instead.")
+
+    runner = client.ssh_runner
+    if runner is None:
+        raise RuntimeError("No SSH connection (tunnel not started?)")
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        r = runner.run_command(f"cat {_marker} 2>/dev/null", timeout=10)
+        if r.returncode == 0 and r.stdout.strip():
+            runner.run_command(f"rm -f {_marker}", timeout=10)
+            return r.stdout.strip()
+        _time.sleep(2)
+
+    raise TimeoutError(f"Simulation did not finish within {timeout}s")
+
+
+def run_and_wait(client: VirtuosoClient, *, session: str = "",
+                 timeout: int = 600) -> tuple[str, str]:
+    """Run simulation and wait for completion without blocking SKILL.
+
+    Uses maeRunSimulation(?callback ...) to register a completion callback
+    atomically with the simulation start — no race condition possible.
+    The callback writes a marker file; Python polls it via SSH.
+
+    The SKILL channel remains free during the wait — you can still
+    execute_skill, dismiss dialogs, take screenshots, etc.
+
+    Returns (history, status) — e.g. ('"Interactive.3"', 'done').
+    """
+    import uuid
+
+    runner = client.ssh_runner
+    if runner is None:
+        raise RuntimeError("No SSH connection (tunnel not started?)")
+
+    nonce = uuid.uuid4().hex[:8]
+    marker = f"/tmp/vb_sim_done_{nonce}"
+    runner.run_command(f"rm -f {marker}", timeout=10)
+
+    # Define callback that writes marker file when simulation finishes.
+    # Use system("echo ... > file") instead of outfile/fprintf to avoid
+    # SKILL I/O buffering issues in callback context.
+    client.execute_skill(f'''
+procedure(_vb_sim_done_{nonce}(session runID)
+  system(sprintf(nil "echo done > {marker}"))
+  printf("[%s sim done] run %s\\n" nth(2 parseString(getCurrentTime())) runID))
+''')
+
+    # Start simulation with callback — atomic, no race condition
+    history = run_simulation(client, session=session,
+                             callback=f"_vb_sim_done_{nonce}")
+
+    # Poll marker via SSH (SKILL channel stays free)
+    status = wait_until_done(client, timeout=timeout, _marker=marker)
+    return history, status
 
 
 # ---------------------------------------------------------------------------

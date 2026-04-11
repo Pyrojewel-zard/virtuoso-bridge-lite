@@ -35,6 +35,7 @@ from virtuoso_bridge.virtuoso.maestro.writer import (
     # simulation
     run_simulation,
     wait_until_done,
+    run_and_wait,
     # export
     create_netlist_for_corner,
     export_output_view,
@@ -86,6 +87,7 @@ __all__ = [
     # write - simulation
     "run_simulation",
     "wait_until_done",
+    "run_and_wait",
     # write - export
     "create_netlist_for_corner",
     "export_output_view",
