@@ -7,8 +7,9 @@ They return the raw SKILL output string.
 from virtuoso_bridge import VirtuosoClient
 
 
-def _q(client: VirtuosoClient, expr: str) -> str:
-    r = client.execute_skill(expr)
+def _q(client: VirtuosoClient, expr: str, timeout: int | None = None) -> str:
+    kwargs = {"timeout": timeout} if timeout is not None else {}
+    r = client.execute_skill(expr, **kwargs)
     if r.errors:
         raise RuntimeError(f"SKILL error: {r.errors[0]}")
     return r.output or ""
@@ -283,56 +284,17 @@ def run_simulation(client: VirtuosoClient, *, session: str = "") -> str:
 
 
 def wait_until_done(client: VirtuosoClient, timeout: int = 600) -> str:
-    """Wait until simulation finishes. Non-blocking on the SKILL channel.
+    """Wait until simulation finishes.
 
-    Uses axlSessionConnect to register a "runFinished" callback on the
-    current ADE session. When ALL sweep points complete, the callback writes
-    a marker file. Python polls the marker via SSHRunner.
-
-    Zero SKILL channel blocking, zero event loop blocking.
+    Uses maeWaitUntilDone('All) which blocks the SKILL call until all
+    sweep points complete. The bridge daemon's watchdog handles timeout.
 
     Must be called AFTER maeRunSimulation() while a GUI session is open.
+    In background sessions (maeOpenSetup), this returns immediately.
 
-    Returns the simulation status string from the callback.
+    Returns the raw SKILL output.
     """
-    import time as _time
-    import uuid
-
-    runner = client.ssh_runner
-    if runner is None:
-        raise RuntimeError("No SSH connection (tunnel not started?)")
-
-    nonce = uuid.uuid4().hex[:8]
-    marker = f"/tmp/vb_sim_done_{nonce}"
-
-    # Remove old marker
-    runner.run_command(f"rm -f {marker}", timeout=10)
-
-    # Disconnect old callback if any, then register new one
-    client.execute_skill(f'''
-let((s)
-  s = axlGetWindowSession(hiGetCurrentWindow())
-  errset(axlSessionDisconnect(s '_vbRunFinishedCB))
-  procedure(_vbRunFinishedCB(ses pointId runId status)
-    let((p) p = outfile("{marker}")
-      fprintf(p "%s\\n" status) close(p)
-      printf("[%s wait_until_done] %s\\n" nth(2 parseString(getCurrentTime())) status)
-      axlSessionDisconnect(ses '_vbRunFinishedCB)))
-  axlSessionConnect(s "runFinished" '_vbRunFinishedCB)
-)
-''')
-
-    # Poll marker file via SSH
-    deadline = _time.monotonic() + timeout
-    while _time.monotonic() < deadline:
-        r = runner.run_command(f"cat {marker} 2>/dev/null", timeout=10)
-        if r.returncode == 0 and r.stdout.strip():
-            # Clean up marker
-            runner.run_command(f"rm -f {marker}", timeout=10)
-            return r.stdout.strip()
-        _time.sleep(2)
-
-    raise TimeoutError(f"Simulation did not finish within {timeout}s")
+    return _q(client, "maeWaitUntilDone('All)", timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
