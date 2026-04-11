@@ -126,7 +126,7 @@ class VirtuosoClient(VirtuosoInterface):
             raise RuntimeError(
                 f"VB_REMOTE_HOST{suffix} must be set. "
                 "Use an explicit env file, create ./.env, or run `virtuoso-bridge init` "
-                "to create ~/.vblite/.env."
+                "to create ~/.virtuoso-bridge/.env."
             )
 
         ssh = SSHClient.from_env(keep_remote_files=True, profile=profile)

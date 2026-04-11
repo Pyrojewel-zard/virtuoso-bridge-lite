@@ -5,7 +5,7 @@ from virtuoso_bridge import env as env_mod
 
 
 def test_cli_init_creates_user_env(monkeypatch, tmp_path, capsys):
-    env_path = tmp_path / ".vblite" / ".env"
+    env_path = tmp_path / ".virtuoso-bridge" / ".env"
     monkeypatch.setattr(cli, "default_user_env_path", lambda: env_path)
     monkeypatch.setattr(cli, "_generate_env_template", lambda: "VB_REMOTE_HOST=test-host\n")
 

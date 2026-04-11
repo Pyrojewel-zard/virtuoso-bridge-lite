@@ -91,7 +91,7 @@ def _start_one_profile(profile: str | None) -> int:
     if not remote_host:
         print(
             f"VB_REMOTE_HOST{suffix} is not set. "
-            "Use --env FILE, create ./.env, or run `virtuoso-bridge init` to create ~/.vblite/.env."
+            "Use --env FILE, create ./.env, or run `virtuoso-bridge init` to create ~/.virtuoso-bridge/.env."
         )
         return 1
 

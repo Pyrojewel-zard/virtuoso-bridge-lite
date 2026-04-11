@@ -10,7 +10,7 @@ _RUNTIME_ENV_FILE: Path | None = None
 
 
 def default_user_env_path() -> Path:
-    return Path.home() / ".vblite" / ".env"
+    return Path.home() / ".virtuoso-bridge" / ".env"
 
 
 def set_runtime_env_file(path: str | Path | None) -> Path | None:

@@ -31,12 +31,12 @@ uv pip install -e .
 **2. Generate config**
 
 ```bash
-virtuoso-bridge init        # creates ~/.vblite/.env
+virtuoso-bridge init        # creates ~/.virtuoso-bridge/.env
 ```
 
 **3. Edit `.env`**
 
-> **Where to put `.env`:** By default the bridge checks `./.env` first, then `~/.vblite/.env`. For CLI commands such as `virtuoso-bridge start`, `--env FILE` has the highest priority.
+> **Where to put `.env`:** By default the bridge checks `./.env` first, then `~/.virtuoso-bridge/.env`. For CLI commands such as `virtuoso-bridge start`, `--env FILE` has the highest priority.
 
 ```dotenv
 VB_REMOTE_HOST=my-server              # SSH host alias from ~/.ssh/config
@@ -231,7 +231,7 @@ M0 (VOUT VIN VSS VSS) nch_ulvt_mac l=30n w=1u nf=1
 ## CLI reference
 
 ```bash
-virtuoso-bridge init      # create ~/.vblite/.env
+virtuoso-bridge init      # create ~/.virtuoso-bridge/.env
 virtuoso-bridge start     # start SSH tunnel + deploy daemon
 virtuoso-bridge restart   # force-restart
 virtuoso-bridge status    # check tunnel + Virtuoso daemon + Spectre

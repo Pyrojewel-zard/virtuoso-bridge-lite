@@ -20,7 +20,7 @@ def test_explicit_env_has_highest_priority(monkeypatch, tmp_path):
     monkeypatch.chdir(cwd)
     env_mod.set_runtime_env_file(None)
 
-    _write_env(home / ".vblite" / ".env", "VB_REMOTE_HOST=user-host\n")
+    _write_env(home / ".virtuoso-bridge" / ".env", "VB_REMOTE_HOST=user-host\n")
     _write_env(cwd / ".env", "VB_REMOTE_HOST=cwd-host\n")
     _write_env(explicit, "VB_REMOTE_HOST=explicit-host\n")
 
@@ -39,7 +39,7 @@ def test_cwd_env_beats_user_env(monkeypatch, tmp_path):
     monkeypatch.chdir(cwd)
     env_mod.set_runtime_env_file(None)
 
-    _write_env(home / ".vblite" / ".env", "VB_REMOTE_HOST=user-host\n")
+    _write_env(home / ".virtuoso-bridge" / ".env", "VB_REMOTE_HOST=user-host\n")
     _write_env(cwd / ".env", "VB_REMOTE_HOST=cwd-host\n")
 
     assert env_mod.resolve_env_path() == (cwd / ".env").resolve()
@@ -54,9 +54,9 @@ def test_user_env_is_fallback(monkeypatch, tmp_path):
     monkeypatch.chdir(cwd)
     env_mod.set_runtime_env_file(None)
 
-    _write_env(home / ".vblite" / ".env", "VB_REMOTE_HOST=user-host\n")
+    _write_env(home / ".virtuoso-bridge" / ".env", "VB_REMOTE_HOST=user-host\n")
 
-    assert env_mod.resolve_env_path() == (home / ".vblite" / ".env").resolve()
+    assert env_mod.resolve_env_path() == (home / ".virtuoso-bridge" / ".env").resolve()
 
 
 def test_runtime_env_file_beats_cwd_and_user(monkeypatch, tmp_path):
@@ -68,7 +68,7 @@ def test_runtime_env_file_beats_cwd_and_user(monkeypatch, tmp_path):
     monkeypatch.setattr(env_mod.Path, "home", lambda: home)
     monkeypatch.chdir(cwd)
 
-    _write_env(home / ".vblite" / ".env", "VB_REMOTE_HOST=user-host\n")
+    _write_env(home / ".virtuoso-bridge" / ".env", "VB_REMOTE_HOST=user-host\n")
     _write_env(cwd / ".env", "VB_REMOTE_HOST=cwd-host\n")
     _write_env(runtime, "VB_REMOTE_HOST=runtime-host\n")
 
