@@ -87,6 +87,7 @@ def _ssh_precheck(profile: str | None = None) -> int | None:
                 print(f"  Verify: ssh -J {jump_user}@{ssh_env.jump_host} {ssh_env.remote_user}@{ssh_env.remote_host}")
             else:
                 print(f"  Verify: ssh {ssh_env.remote_user}@{ssh_env.remote_host}")
+            print(f"  For a local VM, use the VM's IP (run `ip addr` inside the VM).")
             return 1
     return None
 
