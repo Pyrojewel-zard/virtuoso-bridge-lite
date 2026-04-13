@@ -720,6 +720,51 @@ def cli_dismiss_dialog() -> int:
 
 
 
+_SCREENSHOT_TARGET: list[str] = ["ciw"]
+
+
+def cli_windows() -> int:
+    """List all open Virtuoso windows."""
+    _load_cli_env()
+    from virtuoso_bridge import VirtuosoClient
+
+    client = VirtuosoClient.from_env()
+    windows = client.list_windows()
+    if not windows:
+        print("No windows found.")
+        return 1
+    for w in windows:
+        print(f"{w['num']:>4}  {w['name']}")
+    return 0
+
+
+def cli_screenshot() -> int:
+    """Take a screenshot of a Virtuoso window."""
+    _load_cli_env()
+    from virtuoso_bridge import VirtuosoClient
+
+    client = VirtuosoClient.from_env()
+    raw_target = _SCREENSHOT_TARGET[0]
+
+    # Resolve target
+    target: str | int
+    if raw_target.isdigit():
+        target = int(raw_target)
+    else:
+        target = raw_target
+
+    from pathlib import Path
+    output_dir = Path("output")
+    output_dir.mkdir(exist_ok=True)
+
+    result = client.screenshot(output=output_dir, target=target)
+    if result.status.value != "success":
+        print(f"Error: {result.errors[0] if result.errors else 'screenshot failed'}")
+        return 1
+    print(result.output)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="virtuoso-bridge")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -751,6 +796,22 @@ def build_parser() -> argparse.ArgumentParser:
     sp_dismiss.add_argument("--env", default=None,
                             help="Explicit .env file path (highest priority)")
 
+    sp_screenshot = subparsers.add_parser(
+        "screenshot", help="Take a screenshot of a Virtuoso window")
+    sp_screenshot.add_argument(
+        "target", nargs="?", default="ciw",
+        help="ciw (default), current, a view name (schematic/layout/maestro), or window number")
+    sp_screenshot.add_argument("-p", "--profile", default=None,
+                               help="Connection profile")
+    sp_screenshot.add_argument("--env", default=None,
+                               help="Explicit .env file path (highest priority)")
+
+    sp_windows = subparsers.add_parser("windows", help="List all open Virtuoso windows")
+    sp_windows.add_argument("-p", "--profile", default=None,
+                            help="Connection profile")
+    sp_windows.add_argument("--env", default=None,
+                            help="Explicit .env file path (highest priority)")
+
     return parser
 
 
@@ -767,6 +828,8 @@ def main(argv: list[str] | None = None) -> int:
         "sim-jobs": cli_sim_jobs,
         "sim-cancel": cli_sim_cancel,
         "dismiss-dialog": cli_dismiss_dialog,
+        "screenshot": cli_screenshot,
+        "windows": cli_windows,
     }
     # Pass profile to commands that support it
     profile = getattr(args, "profile", None)
@@ -776,6 +839,9 @@ def main(argv: list[str] | None = None) -> int:
     job_id = getattr(args, "job_id", None)
     if job_id is not None:
         _SIM_CANCEL_JOB_ID[0] = job_id
+    screenshot_target = getattr(args, "target", None)
+    if screenshot_target is not None:
+        _SCREENSHOT_TARGET[0] = screenshot_target
     return dispatch[args.command]()
 
 

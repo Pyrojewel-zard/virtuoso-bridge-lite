@@ -71,6 +71,8 @@ All `virtuoso-bridge` CLI commands and Python scripts must run inside the activa
 2. **`virtuoso-bridge start`** — starts the local bridge service and SSH tunnel.
 3. **If status is `degraded`** — the user must load the setup script in Virtuoso CIW (the `start` output tells them exactly what to run).
 4. **`virtuoso-bridge status`** — verify everything is `healthy` before proceeding.
+5. **`virtuoso-bridge windows`** — list all open Virtuoso windows (num + name).
+6. **`virtuoso-bridge screenshot [ciw|current|N]`** — screenshot a window to `output/`. Default: CIW.
 
 ### Then
 
@@ -89,6 +91,8 @@ client.upload_file(local_path, remote_path)      # local → remote
 client.download_file(remote_path, local_path)    # remote → local
 client.open_window(lib, cell, view="layout")     # open GUI window
 client.run_shell_command("ls /tmp/")             # run shell on remote
+client.list_windows()                            # list all open windows
+client.screenshot(output="output", target="ciw") # screenshot a window
 ```
 
 ### CIW output vs return value

@@ -64,7 +64,7 @@ atexit.register(_mark_interpreter_shutdown)
 
 def _windows_no_window_kwargs(
     *,
-    detached: bool = True,
+    detached: bool = False,
     new_process_group: bool = False,
 ) -> dict[str, Any]:
     """Best-effort Windows process flags for CLI tools like ssh/scp/tar."""

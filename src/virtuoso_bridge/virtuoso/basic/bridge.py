@@ -6,6 +6,7 @@ import errno
 import json
 import logging
 import os
+import re
 import socket
 import hashlib
 import time
@@ -411,6 +412,134 @@ class VirtuosoClient(VirtuosoInterface):
         if len(parts) < 4:
             return None, None, None
         return parts[-4], parts[-3], parts[-2]
+
+    # -- screenshot -------------------------------------------------------------
+
+    def list_windows(self, timeout: int | None = None) -> list[dict[str, str]]:
+        """Return a list of all open Virtuoso windows.
+
+        Each entry has keys: ``num`` and ``name`` (raw from ``hiGetWindowName``).
+        """
+        effective_timeout = timeout if timeout is not None else self._timeout
+        # Use "|" as delimiter — tab/newline get escaped in the SKILL→Python path.
+        skill = r'''
+let((result winName ciwNum)
+  result = ""
+  ciwNum = -1
+  let((ciw)
+    ciw = hiGetCIWindow()
+    when(ciw
+      ciwNum = ciw~>windowNum
+      winName = hiGetWindowName(ciw)
+      result = strcat(result sprintf(nil "%d|%s;" ciwNum winName))))
+  foreach(w hiGetWindowList()
+    when(w~>windowNum != ciwNum
+      let((nameResult)
+        nameResult = errset(hiGetWindowName(w))
+        when(nameResult
+          winName = car(nameResult)
+          result = strcat(result sprintf(nil "%d|%s;" w~>windowNum winName))))))
+  result)
+'''
+        r = self.execute_skill(skill, timeout=effective_timeout)
+        windows: list[dict[str, str]] = []
+        if r.status != ExecutionStatus.SUCCESS or not r.output:
+            return windows
+        raw = r.output.strip().strip('"')
+        # Decode SKILL octal escapes like \256 → ®
+        raw = re.sub(r'\\(\d{3})', lambda m: chr(int(m.group(1), 8)), raw)
+        for entry in raw.split(";"):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = entry.split("|", 1)
+            if len(parts) < 2:
+                continue
+            windows.append({
+                "num": parts[0],
+                "name": parts[1],
+            })
+        return windows
+
+    def screenshot(
+        self,
+        output: str | Path | None = None,
+        *,
+        target: str | int = "ciw",
+        timeout: int | None = None,
+    ) -> VirtuosoResult:
+        """Take a screenshot of a Virtuoso window and download it locally.
+
+        Args:
+            output: Local path for the screenshot. Auto-generated if *None*.
+            target: ``"ciw"`` (default), ``"current"``, a view name like
+                ``"schematic"``/``"layout"``/``"maestro"``, or an integer
+                window number.
+        """
+        from virtuoso_bridge.transport.remote_paths import (
+            default_virtuoso_bridge_dir,
+            resolve_remote_username,
+        )
+
+        effective_timeout = timeout if timeout is not None else self._timeout
+
+        # Build SKILL expression that resolves the target window
+        if target == "ciw":
+            win_expr = "hiGetCIWindow()"
+        elif target == "current":
+            win_expr = "hiGetCurrentWindow()"
+        elif isinstance(target, int):
+            win_expr = (
+                f'let((found) foreach(w hiGetWindowList() '
+                f'when(w~>windowNum=={target} found=w)) found)'
+            )
+        else:
+            escaped_view = _escape_skill_string(str(target))
+            win_expr = (
+                f'let((found) foreach(w hiGetWindowList() '
+                f'when(w~>cellView && w~>cellView~>viewName=="{escaped_view}" found=w)) found)'
+            )
+
+        # Remote path
+        username = resolve_remote_username(
+            configured_user=self._tunnel._remote_user if self._tunnel else None,
+            runner=self._tunnel._ssh_runner if self._tunnel else None,
+        )
+        screenshot_dir = default_virtuoso_bridge_dir(username, "screenshots")
+        if self._tunnel and self._tunnel._ssh_runner:
+            self._tunnel._ssh_runner.run_command(f"mkdir -p {screenshot_dir}")
+
+        from datetime import datetime
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        label = str(target) if isinstance(target, int) else target
+        remote_path = f"{screenshot_dir}/{label}_{stamp}.png"
+        escaped_path = _escape_skill_string(remote_path)
+
+        skill = (
+            f'let((w) w={win_expr} '
+            f'if(w '
+            f'hiWindowSaveImage(?target w ?path "{escaped_path}" ?format "png" ?toplevel t) '
+            f'"error: window not found"))'
+        )
+        r = self.execute_skill(skill, timeout=effective_timeout)
+        if r.status != ExecutionStatus.SUCCESS:
+            return r
+        if (r.output or "").strip().strip('"') == "error: window not found":
+            return VirtuosoResult(
+                status=ExecutionStatus.ERROR,
+                errors=[f"Window not found: {target}"],
+                execution_time=r.execution_time,
+            )
+
+        # Download
+        filename = f"{label}_{stamp}.png"
+        if output is None:
+            output = Path(filename)
+        else:
+            output = Path(output)
+            if output.is_dir():
+                output = output / filename
+        return self.download_file(remote_path, output, timeout=effective_timeout)
 
     def ciw_print(self, message: str, timeout: int | None = None) -> VirtuosoResult:
         effective_timeout = timeout if timeout is not None else self._timeout
