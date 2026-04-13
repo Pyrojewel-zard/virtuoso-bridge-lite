@@ -17,9 +17,7 @@ Control Cadence Virtuoso via Python — remotely over SSH or locally on the same
 
 > Virtuoso and Spectre are **independent** — you can run Spectre without the SKILL bridge, and vice versa.
 
-## Step-by-step setup (remote mode)
-
-**1. Install**
+## Install (both modes)
 
 > **Use `uv` + virtual environment** — never install into the global Python.
 
@@ -28,13 +26,15 @@ uv venv .venv && source .venv/bin/activate   # Windows: source .venv/Scripts/act
 uv pip install -e .
 ```
 
-**2. Generate config**
+## Step-by-step setup (remote mode)
+
+**1. Generate config**
 
 ```bash
 virtuoso-bridge init        # creates ~/.virtuoso-bridge/.env
 ```
 
-**3. Edit `.env`**
+**2. Edit `.env`**
 
 > **Where to put `.env`:** By default the bridge checks `./.env` first, then `~/.virtuoso-bridge/.env`. For CLI commands such as `virtuoso-bridge start`, `--env FILE` has the highest priority.
 
@@ -48,25 +48,25 @@ VB_LOCAL_PORT=65082                   # local port forwarded via SSH tunnel
 # VB_CADENCE_CSHRC=/path/to/.cshrc   # cshrc that sets up Cadence tools on the remote
 ```
 
-**4. Start the bridge**
+**3. Start the bridge**
 
 ```bash
 virtuoso-bridge start
 ```
 
-**5. Load SKILL in Virtuoso CIW**
+**4. Load SKILL in Virtuoso CIW**
 
 ```
 load("/path/to/virtuoso-bridge-lite/core/ramic_bridge.il")
 ```
 
-**6. Verify**
+**5. Verify**
 
 ```bash
 virtuoso-bridge status
 ```
 
-**7. Connect from Python**
+**6. Connect from Python**
 
 ```python
 from virtuoso_bridge import VirtuosoClient
@@ -231,10 +231,13 @@ M0 (VOUT VIN VSS VSS) nch_ulvt_mac l=30n w=1u nf=1
 ## CLI reference
 
 ```bash
-virtuoso-bridge init      # create ~/.virtuoso-bridge/.env
-virtuoso-bridge start     # start SSH tunnel + deploy daemon
-virtuoso-bridge restart   # force-restart
-virtuoso-bridge status    # check tunnel + Virtuoso daemon + Spectre
+virtuoso-bridge init            # create ~/.virtuoso-bridge/.env
+virtuoso-bridge start           # start SSH tunnel + deploy daemon
+virtuoso-bridge restart         # force-restart
+virtuoso-bridge status          # check tunnel + Virtuoso daemon + Spectre
+virtuoso-bridge windows         # list all open Virtuoso windows
+virtuoso-bridge screenshot      # screenshot CIW (or: current, N)
+virtuoso-bridge dismiss-dialog  # dismiss blocking GUI dialogs via X11
 ```
 
 ## Build & test
