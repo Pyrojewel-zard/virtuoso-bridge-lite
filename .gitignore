@@ -1,19 +1,82 @@
+# === Secrets & Credentials ===
 .env
+*.env
+.env.*
+.env.backup
+.env.old
+.netrc
+.git-credentials
+
+# SSH / server credentials
+.ssh/
+known_hosts
+known_hosts.old
+id_rsa
+id_ed25519
+id_ecdsa
+id_dsa
+*.pub
+authorized_keys
+authorized_keys2
+
+# Certificates & keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cert
+
+# === Python ===
 .venv/
 __pycache__/
 *.egg-info/
 dist/
 build/
 .pytest_cache/
+*.pyc
+.mypy_cache/
+.pytype/
+
+# === EDA / Virtuoso ===
+skillbridge/
+spectre.out
+psf/
+psfxl/
+psfnoise/
+*.log
+*.tr0
+*.tr1
+*.tr2
+*.ac0
+*.dc
+*.st0
+
+# Virtuoso session lock files
+.cdsLock
+.cds*
+cdsinfo.tag
+cds.lib.lock
+
+# === Project-specific ===
 output/
 logs/
-skillbridge/
 arxiv/
 texput.log
-*.log
 optimization/
 reference/
+RFcircuit/
+library_analysis/
+knowledge/
+
+# === IDE & OS ===
 .vscode/
+.idea/
 .DS_Store
+Thumbs.db
+
+# === AI Tools ===
 .claude/
-spectre.out
+.codex

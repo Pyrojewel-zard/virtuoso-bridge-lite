@@ -1,0 +1,75 @@
+name: 自动同步 fork
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"   # 每天 UTC 02:00 运行一次
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出当前 fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Git 身份
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: 添加 upstream
+        run: |
+          git remote remove upstream || true
+          git remote add upstream https://github.com/Arcadia-1/virtuoso-bridge-lite.git
+          git fetch upstream
+
+      - name: 重置到 fork 的 main
+        run: |
+          git checkout main
+          git fetch origin
+          git reset --hard origin/main
+
+      - name: 尝试 fast-forward 自动同步
+        id: sync_try
+        run: |
+          set +e
+          git merge --ff-only upstream/main
+          code=$?
+          echo "status=$code" >> $GITHUB_OUTPUT
+          exit 0
+
+      - name: 自动推送同步结果
+        if: steps.sync_try.outputs.status == '0'
+        run: |
+          git push origin main
+
+      - name: 创建人工处理分支
+        if: steps.sync_try.outputs.status != '0'
+        run: |
+          git checkout -B sync-upstream-pr
+          git reset --hard origin/main
+          git merge upstream/main || true
+          git push origin sync-upstream-pr --force
+
+      - name: 创建提醒 PR
+        if: steps.sync_try.outputs.status != '0'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: sync-upstream-pr-meta
+          base: main
+          title: "自动同步 upstream 失败，需人工 merge"
+          commit-message: "chore: create sync PR"
+          body: |
+            @Pyrojewel-zard
+
+            检测到 upstream 有更新，但当前 fork 无法直接 fast-forward。
+            请手动 review 并 merge。
+          delete-branch: true
