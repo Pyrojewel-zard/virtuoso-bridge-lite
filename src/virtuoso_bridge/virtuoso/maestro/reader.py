@@ -576,23 +576,28 @@ def _match_mae_title(titles) -> dict:
     return {}
 
 
-def read_session_info(client: VirtuosoClient, session: str | None = None, *,
+def read_session_info(client: VirtuosoClient, *,
                       sdb_cache_path: str | None = None) -> dict:
-    """Read maestro session metadata: lib/cell/view, sdb path, histories, test.
+    """Read maestro session metadata for the *currently-focused* window.
 
-    When ``session=None`` (the default), the function treats the
-    currently-focused maestro window as the source of truth:
+    The focused window (``hiGetCurrentWindow()``) is the single source of
+    truth — there is no way to force a different session.  If the user
+    wants a specific maestro, they click its window first.  This keeps
+    the return shape internally consistent (lib/cell/view/session/test
+    all describe the same cellview).
 
-      1. Parse ``hiGetCurrentWindow()`` title → lib / cell / view
-      2. If multiple maestro sessions are open, identify which one
-         corresponds to the focused cellview by matching its test-name
-         set against each session's ``maeGetSetup`` result.  Requires
-         downloading the focused cell's ``maestro.sdb`` (one scp).
-      3. Use that session for the ``test`` field.
+    Steps:
+      1. Parse the focused window title → lib / cell / view /
+         editable / unsaved_changes.
+      2. List the view directory on disk → lib_path, history list,
+         canonical sdb filename.
+      3. Match the focused sdb's test-name set against
+         ``maeGetSetup`` for each open maestro session → resolved session.
+      4. Query the resolved session for its test name.
 
-    Pass an explicit ``session=X`` to bypass auto-detection.  Pass
-    ``sdb_cache_path`` to persist the downloaded sdb (re-used by
-    ``read_corners``), so auto-detect costs at most one scp total.
+    Pass ``sdb_cache_path`` to persist the downloaded ``maestro.sdb``
+    (re-used by ``read_corners``), so auto-detect costs at most one scp
+    total.
 
     The view name is extracted from the title rather than hardcoded, so
     ``maestro`` / ``maestro_MC`` / any other view works.  The sdb filename is
@@ -769,21 +774,19 @@ def read_session_info(client: VirtuosoClient, session: str | None = None, *,
         if lib_path and cell and view else ""
     )
 
-    # --- Resolve session (auto-detect by default) ---------------------------
-    # When None, map focused cellview → session via sdb test-name matching.
-    # Skipped entirely if only one session is open (trivial) or if caller
-    # passed an explicit session.
-    if session is None:
-        if len(all_sessions) == 0:
-            session = ""
-        elif len(all_sessions) == 1:
-            session = all_sessions[0]
-        elif sdb_path:
-            session = detect_session_for_focus(
-                client, sdb_path=sdb_path, sdb_cache_path=sdb_cache_path,
-            ) or ""
-        else:
-            session = ""
+    # --- Resolve session from focused cellview -----------------------------
+    # No escape hatch: always map focused cellview → session via sdb
+    # test-name matching.  Skipped if only one session exists (trivial).
+    if len(all_sessions) == 0:
+        session = ""
+    elif len(all_sessions) == 1:
+        session = all_sessions[0]
+    elif sdb_path:
+        session = detect_session_for_focus(
+            client, sdb_path=sdb_path, sdb_cache_path=sdb_cache_path,
+        ) or ""
+    else:
+        session = ""
 
     # --- Test name for the resolved session --------------------------------
     test = _get_test(client, session) if session else ""
@@ -1072,23 +1075,20 @@ def read_status(client: VirtuosoClient, session: str) -> dict:
     }
 
 
-def snapshot(client: VirtuosoClient, session: str | None = None, *,
+def snapshot(client: VirtuosoClient, *,
              include_results: bool = False,
              sdb_cache_path: str | None = None) -> dict:
-    """Aggregate snapshot of a maestro session in one JSON-serializable dict.
+    """Aggregate snapshot of the currently-focused maestro session.
 
-    When ``session=None`` (default), the currently-focused maestro window
-    is used as the source of truth; the matching session is auto-detected
-    via sdb test-name matching.
-
-    Combines session_info + status + config + env + variables + outputs +
-    corners.  When ``include_results=True`` also calls ``read_results``
-    (GUI mode only, may be slow).  Pass ``sdb_cache_path`` to persist the
-    downloaded ``maestro.sdb`` on disk (and make session auto-detect
-    effectively free for later calls).
+    Always uses the focused window (``hiGetCurrentWindow()``) as the
+    source of truth — no session parameter.  Combines session_info +
+    status + config + env + variables + outputs + corners.  When
+    ``include_results=True`` also calls ``read_results`` (GUI mode only,
+    may be slow).  Pass ``sdb_cache_path`` to persist the downloaded
+    ``maestro.sdb`` on disk (shared with corner parsing).
     """
-    info = read_session_info(client, session, sdb_cache_path=sdb_cache_path)
-    sess = info.get("session") or session or ""
+    info = read_session_info(client, sdb_cache_path=sdb_cache_path)
+    sess = info.get("session") or ""
     out: dict = {
         "session_info": info,
         "status": read_status(client, sess) if sess else {},
