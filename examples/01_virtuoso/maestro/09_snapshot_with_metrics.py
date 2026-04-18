@@ -116,16 +116,14 @@ def main() -> int:
     client = VirtuosoClient.from_env()
     wrap(client, counters)
 
-    with step("find_open_session", counters):
-        session = find_open_session(client)
-    if not session:
-        print("No active Maestro session found.")
-        return 1
-    print(f"Session: {session}\n")
-
-    # Grab session_info FIRST so we can construct the snapshot dir.
+    # Auto-detect session from the focused maestro window (session=None).
     with step("read_session_info", counters):
-        info = read_session_info(client, session)
+        info = read_session_info(client)
+    session = info.get("session") or ""
+    if not session:
+        print("No maestro window focused.")
+        return 1
+    print(f"Session: {session}  (auto-detected from focused window)\n")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     lib = info.get("lib") or "unknown_lib"

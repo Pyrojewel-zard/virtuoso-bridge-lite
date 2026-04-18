@@ -576,32 +576,41 @@ def _match_mae_title(titles) -> dict:
     return {}
 
 
-def read_session_info(client: VirtuosoClient, session: str) -> dict:
-    """Read maestro session metadata: lib/cell/view, sdb path, results dir, histories.
+def read_session_info(client: VirtuosoClient, session: str | None = None, *,
+                      sdb_cache_path: str | None = None) -> dict:
+    """Read maestro session metadata: lib/cell/view, sdb path, histories, test.
 
-    Performs at most two SKILL round-trips:
-      1. currently-focused window name + all window names + test list
-      2. lib path + view-directory listing + history list
+    When ``session=None`` (the default), the function treats the
+    currently-focused maestro window as the source of truth:
 
-    The focused window (``hiGetCurrentWindow()``) is preferred so that when
-    multiple maestro sessions are open simultaneously, we report the one the
-    user is actively interacting with.
+      1. Parse ``hiGetCurrentWindow()`` title → lib / cell / view
+      2. If multiple maestro sessions are open, identify which one
+         corresponds to the focused cellview by matching its test-name
+         set against each session's ``maeGetSetup`` result.  Requires
+         downloading the focused cell's ``maestro.sdb`` (one scp).
+      3. Use that session for the ``test`` field.
+
+    Pass an explicit ``session=X`` to bypass auto-detection.  Pass
+    ``sdb_cache_path`` to persist the downloaded sdb (re-used by
+    ``read_corners``), so auto-detect costs at most one scp total.
 
     The view name is extracted from the title rather than hardcoded, so
     ``maestro`` / ``maestro_MC`` / any other view works.  The sdb filename is
     discovered by listing the view directory and filtering with a strict
     ``^[^.]+\.sdb$`` regex (rejecting ``.cdslck``, ``.old``, ``.bak``, etc.).
     """
-    # --- Round 1: current + all window names + test list --------------------
+    # --- Round 1: current window + all window names + list of maestro sessions
     # Note: no geGetEditCellView / geGetWindowCellView here — those warn on
     # non-graphic windows like the maestro Assembler (GE-2067).
+    # We request maeGetSessions() instead of maeGetSetup(?session) because
+    # `session` may be None at this point (auto-detect below).
     r = client.execute_skill(
-        f'let((cw) '
-        f'cw = hiGetCurrentWindow() '
-        f'list('
-        f'  if(cw hiGetWindowName(cw) nil) '
-        f'  mapcar(lambda((w) hiGetWindowName(w)) hiGetWindowList()) '
-        f'  maeGetSetup(?session "{session}")))'
+        'let((cw) '
+        'cw = hiGetCurrentWindow() '
+        'list('
+        '  if(cw hiGetWindowName(cw) nil) '
+        '  mapcar(lambda((w) hiGetWindowName(w)) hiGetWindowList()) '
+        '  maeGetSessions()))'
     )
     raw = r.output or ""
 
@@ -666,8 +675,7 @@ def read_session_info(client: VirtuosoClient, session: str) -> dict:
 
     cur_name = chunks[0].strip().strip('"') if chunks[0] != "nil" else ""
     all_names = _parse_skill_str_list(chunks[1])
-    tests = _parse_skill_str_list(chunks[2])
-    test = tests[0] if tests else ""
+    all_sessions = _parse_skill_str_list(chunks[2])
 
     # --- Identify which maestro window the user is on -----------------------
     # Prefer the focused window; fall back to scanning all windows.
@@ -761,6 +769,25 @@ def read_session_info(client: VirtuosoClient, session: str) -> dict:
         if lib_path and cell and view else ""
     )
 
+    # --- Resolve session (auto-detect by default) ---------------------------
+    # When None, map focused cellview → session via sdb test-name matching.
+    # Skipped entirely if only one session is open (trivial) or if caller
+    # passed an explicit session.
+    if session is None:
+        if len(all_sessions) == 0:
+            session = ""
+        elif len(all_sessions) == 1:
+            session = all_sessions[0]
+        elif sdb_path:
+            session = detect_session_for_focus(
+                client, sdb_path=sdb_path, sdb_cache_path=sdb_cache_path,
+            ) or ""
+        else:
+            session = ""
+
+    # --- Test name for the resolved session --------------------------------
+    test = _get_test(client, session) if session else ""
+
     return {
         "session": session,
         "lib": lib,
@@ -775,6 +802,70 @@ def read_session_info(client: VirtuosoClient, session: str) -> dict:
         "history_list": history_list,
         "test": test,
     }
+
+
+def parse_tests_from_sdb_xml(xml_text: str) -> set[str]:
+    """Extract declared test names from a ``maestro.sdb`` XML payload.
+
+    Looks under ``<active><tests><test ...>NAME<...>`` — the NAME is direct
+    text content, not an attribute.  Returns an empty set on parse error.
+    """
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return set()
+
+    result: set[str] = set()
+    for active in root.findall("active"):
+        tests_elem = active.find("tests")
+        if tests_elem is None:
+            continue
+        for t in tests_elem.findall("test"):
+            name = (t.text or "").strip()
+            if name:
+                result.add(name)
+    return result
+
+
+def detect_session_for_focus(client: VirtuosoClient, *,
+                              sdb_path: str,
+                              sdb_cache_path: str | None = None) -> str | None:
+    """Find which open maestro session corresponds to the focused cellview.
+
+    Side-effect-free: reads the focused cell's ``maestro.sdb`` (via scp),
+    extracts its test-name set, then compares against
+    ``maeGetSetup(?session S)`` for each open session and returns the
+    session whose tests intersect.
+
+    - With exactly one open session, returns it immediately (no scp).
+    - Returns ``None`` if no session's tests overlap (shouldn't happen in
+      practice unless the user just changed setup without saving).
+    """
+    r = client.execute_skill('maeGetSessions()')
+    sessions = _parse_skill_str_list(r.output or "")
+    if not sessions:
+        return None
+    if len(sessions) == 1:
+        return sessions[0]
+
+    if not sdb_path:
+        return None
+    xml_text = read_remote_file(
+        client, sdb_path,
+        local_path=sdb_cache_path, reuse_if_exists=True,
+    )
+    focused_tests = parse_tests_from_sdb_xml(xml_text)
+    if not focused_tests:
+        return None
+
+    for s in sessions:
+        r = client.execute_skill(f'maeGetSetup(?session "{s}")')
+        tests = set(_parse_skill_str_list(r.output or ""))
+        if tests & focused_tests:
+            return s
+    return None
 
 
 def parse_corners_xml(xml_text: str) -> dict[str, dict]:
@@ -981,31 +1072,39 @@ def read_status(client: VirtuosoClient, session: str) -> dict:
     }
 
 
-def snapshot(client: VirtuosoClient, session: str, *,
+def snapshot(client: VirtuosoClient, session: str | None = None, *,
              include_results: bool = False,
              sdb_cache_path: str | None = None) -> dict:
     """Aggregate snapshot of a maestro session in one JSON-serializable dict.
 
-    Combines session_info + config + env + variables + outputs + corners.
-    When ``include_results=True`` also calls ``read_results`` (GUI mode only,
-    may be slow).  Pass ``sdb_cache_path`` to keep the downloaded
-    ``maestro.sdb`` on disk for auditing / diffing.
+    When ``session=None`` (default), the currently-focused maestro window
+    is used as the source of truth; the matching session is auto-detected
+    via sdb test-name matching.
+
+    Combines session_info + status + config + env + variables + outputs +
+    corners.  When ``include_results=True`` also calls ``read_results``
+    (GUI mode only, may be slow).  Pass ``sdb_cache_path`` to persist the
+    downloaded ``maestro.sdb`` on disk (and make session auto-detect
+    effectively free for later calls).
     """
-    info = read_session_info(client, session)
+    info = read_session_info(client, session, sdb_cache_path=sdb_cache_path)
+    sess = info.get("session") or session or ""
     out: dict = {
         "session_info": info,
-        "status": read_status(client, session),
-        "config": read_config(client, session),
-        "env": read_env(client, session),
-        "variables": read_variables(client, session),
-        "outputs": read_outputs(client, session),
-        "corners": read_corners(client, session,
-                                sdb_path=info.get("sdb_path") or None,
-                                local_sdb_path=sdb_cache_path,
-                                reuse_local=True),
+        "status": read_status(client, sess) if sess else {},
+        "config": read_config(client, sess) if sess else {},
+        "env": read_env(client, sess) if sess else {},
+        "variables": read_variables(client, sess) if sess else {},
+        "outputs": read_outputs(client, sess) if sess else [],
+        "corners": read_corners(
+            client, sess,
+            sdb_path=info.get("sdb_path") or None,
+            local_sdb_path=sdb_cache_path,
+            reuse_local=True,
+        ),
     }
     if include_results:
         out["results"] = read_results(
-            client, session,
+            client, sess,
             lib=info.get("lib", ""), cell=info.get("cell", ""))
     return out

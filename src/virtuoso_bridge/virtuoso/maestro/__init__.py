@@ -20,6 +20,8 @@ from virtuoso_bridge.virtuoso.maestro.reader import (
     read_corners,
     read_status,
     parse_corners_xml,
+    parse_tests_from_sdb_xml,
+    detect_session_for_focus,
     snapshot,
 )
 from virtuoso_bridge.virtuoso.maestro.writer import (
@@ -86,6 +88,8 @@ __all__ = [
     "read_corners",
     "read_status",
     "parse_corners_xml",
+    "parse_tests_from_sdb_xml",
+    "detect_session_for_focus",
     "snapshot",
     # write - test
     "create_test",
