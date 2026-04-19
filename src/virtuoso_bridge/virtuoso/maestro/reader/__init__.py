@@ -22,6 +22,7 @@ from submodules directly.
 from ._parse_log import parse_history_log
 from ._parse_skill import parse_skill_alist
 from ._parse_sdb import (
+    filter_sdb_xml,
     parse_corners_xml,
     parse_parameters_from_sdb_xml,
     parse_tests_from_sdb_xml,
@@ -60,6 +61,7 @@ __all__ = [
     "parse_tests_from_sdb_xml",
     "parse_variables_from_sdb_xml",
     "parse_history_log",
+    "filter_sdb_xml",
     # session (live, needs client)
     "read_session_info",
     "detect_session_for_focus",

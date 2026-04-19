@@ -20,7 +20,7 @@ from ._compact import (
     _compact_status,
     _extract_models,
 )
-from ._parse_sdb import parse_parameters_from_sdb_xml
+from ._parse_sdb import filter_sdb_xml, parse_parameters_from_sdb_xml
 from .probes import (
     _parse_config,
     _parse_env,
@@ -247,6 +247,17 @@ def snapshot_to_dir(client: VirtuosoClient, *,
                         client.download_file(netlist_remote, str(hist_dir / "input.scs"))
                     except Exception:
                         pass
+
+        # Filtered sdb (high-signal subset, ~10× smaller than maestro.sdb).
+        # Useful when feeding state to LLMs / when you want a compact view.
+        if local_sdb.exists():
+            try:
+                xml = local_sdb.read_text(encoding="utf-8", errors="replace")
+                filt = filter_sdb_xml(xml)
+                if filt:
+                    (snap_dir / "maestro.filtered.sdb").write_text(filt, encoding="utf-8")
+            except OSError:
+                pass
 
         (snap_dir / "snapshot.json").write_text(
             json.dumps(snap, indent=2, ensure_ascii=False, default=str),
