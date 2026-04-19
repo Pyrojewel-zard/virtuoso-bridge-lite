@@ -22,7 +22,11 @@ from .remote_io import read_remote_file
 
 _MAE_TITLE_RE = re.compile(
     r"ADE\s+(Assembler|Explorer)\s+(Editing|Reading):\s+"
-    r"(\S+)\s+(\S+)\s+([^\s*]+)(\*?)\s*$"
+    r"(\S+)\s+(\S+)\s+([^\s*]+)(\*?)"
+    # OpenAccess library checkout suffix is optional, e.g.
+    # ``... maestro Version: 1 -CheckedOut`` or ``... maestro Version:7-CheckedOut``.
+    r"(?:\s+Version:\s*\S+(?:\s*-\s*\S+)?)?"
+    r"\s*$"
 )
 # A history is anchored by its .rdb metadata file (any user-given name, any
 # suffix like Interactive.0.RO, closeloop_PVT_postsim, etc.).  We also accept
