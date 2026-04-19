@@ -63,18 +63,17 @@ maestro_sdb:
 
 active_state:
   components_keep:
-    # Identity + design pointer
+    # Identity + design pointer.
     - adeInfo                 # designInfo + projectDir + description
-    # The full per-analysis sim setup — the bulk of useful state lives here.
+    # Per-analysis full settings — for pss/pnoise the active.state entry
+    # is more complete than SKILL's maeGetAnalysis (which omits defaults).
     - analyses                # <analysis Name="pss|pnoise|tran|ac|dc|noise|sp|stb">
-    # Per-test design knobs
-    - variables               # per-test vars (sdb has globals too)
-    - outputs                 # per-test output definitions
-    - modelSetup              # model file selection
-    - environmentOptions      # asiEnv key/value pairs
-    - rfstim                  # RF stimulus (PSS large-signal sources)
-    # Simulator engine selection — the Spectre X accuracy preset
-    # (AX / CX / MX) and APS-vs-Spectre-X choice live here.
+    # Per-test variables — distinct scope from sdb's globals.
+    - variables
+    # RF stimulus — large-signal sources for PSS; not in SKILL track.
+    - rfstim
+    # Simulator engine selection — Spectre X accuracy preset (AX / CX /
+    # MX) and APS-vs-Spectre-X choice live here.
     - turboOptions            # uniMode / spectreXAccuracyScale / mtOption / ...
     # Optional per-test setups — populated only when the user uses these
     # features, but high-signal when populated.
@@ -83,9 +82,15 @@ active_state:
     - graphicalStimuli        # GUI-drawn stimulus waveforms
 
   components_drop:
+    # Redundant with the SKILL track — the same data is in
+    # ``state_from_skill.txt`` under ``maeGetTestOutputs() expanded`` /
+    # ``maeGetEnvOption()`` (which embeds modelFiles).  Active.state
+    # adds ~700 lines of GUI scratch fields per cell when included.
+    # - outputs                # = maeGetTestOutputs (in SKILL track)
+    # - environmentOptions     # = maeGetEnvOption    (in SKILL track)
+    # - modelSetup             # = maeGetEnvOption.modelFiles
     # Pure GUI defaults across all observed cells (verified against
-    # 5 example_artifacts cells — 0 fields vary).  Uncomment under
-    # ``components_keep`` if you need them.
+    # 5 example_artifacts cells — 0 fields vary).
     # - simulatorOptions       # spectre options (temp/reltol/...) — 151/152
     #                          # fields are GUI defaults; uncomment to
     #                          # capture user overrides of temp / tnom / etc.

@@ -57,10 +57,11 @@ _DEFAULT_SDB_ACTIVE_KEEP = (
     "parameters", "specs", "parametersets", "overwritehistoryname",
 )
 _DEFAULT_STATE_COMPONENT_KEEP = (
-    "adeInfo", "analyses", "variables", "outputs",
-    "modelSetup", "environmentOptions", "rfstim",
+    "adeInfo", "analyses", "variables", "rfstim",
     "turboOptions",                              # Spectre X / APS / AX / CX
     "mdlOptions", "mtsSetup", "graphicalStimuli", # populated only when used
+    # outputs / environmentOptions / modelSetup deliberately dropped —
+    # redundant with SKILL track (see snapshot_filter.yaml notes).
 )
 
 
@@ -105,7 +106,30 @@ def filter_sdb_xml(xml_text: str) -> str:
     return ET.tostring(new_root, encoding="unicode")
 
 
-def filter_active_state_xml(xml_text: str) -> str:
+def _sdb_active_tests(sdb_xml: str) -> set[str]:
+    """Extract the set of test names declared under ``<active><tests>``
+    in a ``maestro.sdb`` payload.  Used to drop stale ``<Test>`` blocks
+    in ``active.state`` (Cadence keeps tombstones for removed tests).
+    Returns empty set on parse error.
+    """
+    try:
+        root = ET.fromstring(sdb_xml)
+    except ET.ParseError:
+        return set()
+    out: set[str] = set()
+    for active in root.findall("active"):
+        tests_elem = active.find("tests")
+        if tests_elem is None:
+            continue
+        for t in tests_elem.findall("test"):
+            name = (t.text or "").strip()
+            if name:
+                out.add(name)
+    return out
+
+
+def filter_active_state_xml(xml_text: str, *,
+                             valid_test_names: set[str] | None = None) -> str:
     """Return a stripped-down ``active.state`` XML — only the components
     flagged as high-signal in ``snapshot_filter.yaml`` are kept.
 
@@ -114,7 +138,16 @@ def filter_active_state_xml(xml_text: str) -> str:
     important ones (analyses, variables, outputs, modelSetup, ...) carry
     the actual configuration; the others are GUI scratch.
 
-    The whitelist is loaded from ``resources/snapshot_filter.yaml`` (key
+    Cadence persists ``<Test>`` blocks for *every test ever configured*
+    in this maestro view, even after the user removes a test from the
+    GUI (sdb's ``<active><tests>`` updates immediately, but
+    ``active.state`` keeps a tombstone).  Pass ``valid_test_names`` —
+    typically the set returned by :func:`_sdb_active_tests` on the
+    sibling ``maestro.sdb`` — to drop those tombstones.  When omitted,
+    every ``<Test>`` block survives.
+
+    The component whitelist is loaded from
+    ``resources/snapshot_filter.yaml`` (key
     ``active_state.components_keep``).
 
     Pure function: takes / returns XML strings, no I/O.  Returns ``""``
@@ -130,6 +163,8 @@ def filter_active_state_xml(xml_text: str) -> str:
 
     new_root = ET.Element("statedb", root.attrib)
     for test in root.findall("Test"):
+        if valid_test_names is not None and test.get("Name") not in valid_test_names:
+            continue
         new_test = ET.SubElement(new_root, "Test", test.attrib)
         for comp in test.findall("component"):
             if comp.get("Name") in keep:

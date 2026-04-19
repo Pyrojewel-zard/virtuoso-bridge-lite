@@ -33,7 +33,7 @@ from pathlib import Path
 
 from virtuoso_bridge import VirtuosoClient
 
-from ._parse_sdb import filter_active_state_xml, filter_sdb_xml
+from ._parse_sdb import _sdb_active_tests, filter_active_state_xml, filter_sdb_xml
 from .bundle import full_bundle
 from .session import _fetch_window_state, _match_mae_title, natural_sort_histories
 
@@ -70,13 +70,13 @@ def _write_filtered_xml(local_raw: Path, target: Path, filter_fn) -> None:
 def _format_skill_sections(sections: list[tuple[str, str]]) -> str:
     """Render the bundle's raw_sections as a labeled plain-text dump.
 
-    Each section gets a ``== {label} ==`` header followed by the raw
-    SKILL output verbatim.  Consumers (AI or human) read SKILL alists
+    Each section gets a ``[label]`` header followed by the raw SKILL
+    output verbatim.  Consumers (AI or human) read SKILL alists
     directly — no JSON conversion.
     """
     out_parts: list[str] = []
     for label, raw in sections:
-        out_parts.append(f"== {label} ==")
+        out_parts.append(f"[{label}]")
         out_parts.append((raw or "").rstrip())
         out_parts.append("")   # blank line between sections
     return "\n".join(out_parts).rstrip() + "\n"
@@ -91,20 +91,30 @@ def _dump_to_dir(client: VirtuosoClient, *, bundle: dict, lib: str, cell: str,
     snap_dir.mkdir(parents=True, exist_ok=True)
 
     # --- raw + filtered XMLs (the "golden" setup data) ---
+    # active.state filter cross-references sdb's <active><tests> set to
+    # drop "tombstone" ``<Test>`` blocks Cadence keeps for tests the
+    # user has since removed from the GUI.
     lib_path = bundle.get("lib_path") or ""
+    valid_tests: set[str] = set()
     if lib_path:
         sdb_remote = f"{lib_path}/{cell}/{view}/{view}.sdb"
         local_sdb = snap_dir / "maestro.sdb"
         if _scp_quietly(client, sdb_remote, local_sdb):
             _write_filtered_xml(local_sdb, snap_dir / "state_from_sdb.xml",
                                 filter_sdb_xml)
+            try:
+                valid_tests = _sdb_active_tests(
+                    local_sdb.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                valid_tests = set()
         # active.state is a sibling of maestro.sdb in the OA view dir.
         state_remote = f"{lib_path}/{cell}/{view}/active.state"
         local_state = snap_dir / "active.state"
         if _scp_quietly(client, state_remote, local_state):
-            _write_filtered_xml(local_state,
-                                snap_dir / "state_from_active_state.xml",
-                                filter_active_state_xml)
+            _write_filtered_xml(
+                local_state, snap_dir / "state_from_active_state.xml",
+                lambda x: filter_active_state_xml(
+                    x, valid_test_names=valid_tests or None))
 
     # --- raw SKILL dump ---
     sections = bundle.get("raw_sections") or []
