@@ -722,6 +722,16 @@ def cli_dismiss_dialog() -> int:
 
 _SCREENSHOT_TARGET: list[str] = ["ciw"]
 
+# Mutable bag for cli_snapshot — set from argparse, read inside the handler.
+_SNAPSHOT_OPTS: dict = {
+    "output_root":            "output/snapshots",
+    "stdout":                 False,
+    "include_output_values":  False,
+    "no_latest_history":      False,
+    "no_raw_skill":           False,
+    "no_metrics":             False,
+}
+
 
 def cli_windows() -> int:
     """List all open Virtuoso windows."""
@@ -762,6 +772,79 @@ def cli_windows() -> int:
         marker = "*" if is_focused else " "
         name = f"{BOLD}{w['name']}{RESET}" if is_focused else w["name"]
         print(f"{marker} {w['num']:>4}  {name}")
+    return 0
+
+
+def cli_snapshot() -> int:
+    """Snapshot the currently-focused Virtuoso window.
+
+    Auto-detects whether it's a maestro / schematic / layout / ... and
+    dispatches.  Default: dump to a timestamped directory under
+    ``output/snapshots/``.  Use ``--stdout`` to print JSON to stdout
+    instead (no disk writes).
+    """
+    _load_cli_env()
+    import json
+    import sys
+    from pathlib import Path
+    from virtuoso_bridge import VirtuosoClient
+    from virtuoso_bridge.virtuoso import snapshot as poly_snapshot
+    from virtuoso_bridge.virtuoso.maestro import snapshot_to_dir as _maestro_to_dir
+
+    client = VirtuosoClient.from_env()
+    opts = _SNAPSHOT_OPTS
+    output_root = opts["output_root"]
+
+    # Probe the window kind first (one tiny SKILL call) so we can pick
+    # the right backend.  For maestro we route to snapshot_to_dir
+    # (gives us metrics + raw_skill log + sibling JSON files); other
+    # kinds go through the in-memory dispatcher and either stdout or a
+    # single .json file.
+    title = client.execute_skill(
+        'let((cw) cw = hiGetCurrentWindow() if(cw hiGetWindowName(cw) ""))'
+    ).output or ""
+    title = title.strip().strip('"')
+    from virtuoso_bridge.virtuoso.snapshot import classify_window
+    kind = classify_window(title)
+
+    print(f"focused: [{kind}] {title}", file=sys.stderr)
+
+    if opts["stdout"]:
+        # In-memory snapshot, JSON to stdout.
+        result = poly_snapshot(
+            client,
+            include_output_values=opts["include_output_values"],
+            include_latest_history=not opts["no_latest_history"],
+        ) if kind == "maestro" else poly_snapshot(client)
+        json.dump(result, sys.stdout, indent=2, ensure_ascii=False, default=str)
+        sys.stdout.write("\n")
+        return 0
+
+    # On-disk path.
+    if kind == "maestro":
+        snap_dir = _maestro_to_dir(
+            client, output_root=output_root,
+            include_output_values=opts["include_output_values"],
+            include_latest_history=not opts["no_latest_history"],
+            include_raw_skill=not opts["no_raw_skill"],
+            include_metrics=not opts["no_metrics"],
+        )
+        print(snap_dir)
+        return 0
+
+    # Unsupported kind: write the envelope dict so the user gets *something*.
+    if kind == "unknown":
+        print(f"no recognizable Virtuoso window in focus", file=sys.stderr)
+        return 1
+    result = poly_snapshot(client)
+    out_dir = Path(output_root) / f"snapshot_{kind}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / "snapshot.json"
+    out_file.write_text(json.dumps(result, indent=2, ensure_ascii=False, default=str),
+                        encoding="utf-8")
+    print(out_file)
+    print(f"({kind} snapshot is stub — only kind/window_title written; "
+          f"add an aggregator in virtuoso/snapshot.py)", file=sys.stderr)
     return 0
 
 
@@ -839,6 +922,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp_windows.add_argument("--env", default=None,
                             help="Explicit .env file path (highest priority)")
 
+    sp_snap = subparsers.add_parser(
+        "snapshot",
+        help="Snapshot the focused Virtuoso window (auto-detects maestro/schematic/...)")
+    sp_snap.add_argument("-o", "--output-root", default="output/snapshots",
+                         help="Where to write the snapshot directory (default: output/snapshots)")
+    sp_snap.add_argument("--stdout", action="store_true",
+                         help="Print JSON to stdout instead of writing to disk")
+    sp_snap.add_argument("--include-output-values", action="store_true",
+                         help="(maestro) Pull simulation output scalars (GUI mode required)")
+    sp_snap.add_argument("--no-latest-history", action="store_true",
+                         help="(maestro) Skip the newest-history log + spectre.out tail")
+    sp_snap.add_argument("--no-raw-skill", action="store_true",
+                         help="(maestro) Don't write raw_skill.json")
+    sp_snap.add_argument("--no-metrics", action="store_true",
+                         help="(maestro) Don't write probe_log.json")
+    sp_snap.add_argument("-p", "--profile", default=None,
+                         help="Connection profile")
+    sp_snap.add_argument("--env", default=None,
+                         help="Explicit .env file path (highest priority)")
+
     return parser
 
 
@@ -875,6 +978,7 @@ def main(argv: list[str] | None = None) -> int:
         "dismiss-dialog": cli_dismiss_dialog,
         "screenshot": cli_screenshot,
         "windows": cli_windows,
+        "snapshot": cli_snapshot,
     }
     # Pass profile to commands that support it
     profile = getattr(args, "profile", None)
@@ -887,6 +991,11 @@ def main(argv: list[str] | None = None) -> int:
     screenshot_target = getattr(args, "target", None)
     if screenshot_target is not None:
         _SCREENSHOT_TARGET[0] = screenshot_target
+    if args.command == "snapshot":
+        for k in _SNAPSHOT_OPTS:
+            v = getattr(args, k, None)
+            if v is not None:
+                _SNAPSHOT_OPTS[k] = v
     return dispatch[args.command]()
 
 
