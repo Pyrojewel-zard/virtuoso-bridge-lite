@@ -741,6 +741,9 @@ def _print_maestro_brief(d: dict) -> None:
     print(f"focused : [{sess.get('app','?')}] {d.get('location','')}  "
           f"({sess.get('mode','?')}{', unsaved' if sess.get('unsaved') else ''})")
     print(f"session : {sess.get('id','')}  test={sess.get('test','')}")
+    run_mode = (d.get("status") or {}).get("run_mode") or ""
+    if run_mode:
+        print(f"run mode: {run_mode}")
     if analyses:
         print(f"analyses: {', '.join(analyses)}")
 
@@ -757,26 +760,31 @@ def _print_maestro_brief(d: dict) -> None:
         print("vars    : (none)")
 
     # --- Corners (one line, name(detail) comma-separated) ---
+    # Annotate when run_mode won't actually execute the enabled corners
+    # ("Single Run, Sweeps and Corners" -> runs them; "Single Point" /
+    # "Single Run" / similar -> they're checked in the GUI but ignored).
+    will_run_corners = "Corner" in run_mode  # heuristic, matches Cadence labels
+    suffix = "" if will_run_corners else "  [NOT in current run mode]"
     if enabled:
         items = ", ".join(_format_corner(n, cdetail.get(n) or {}) for n in enabled)
-        print(f"corners : {items}")
+        print(f"corners : {items}{suffix}")
     else:
-        print(f"corners : (none enabled)")
+        print(f"corners : (none enabled){suffix if run_mode else ''}")
 
     # --- Outputs (one per line — names + exprs are too long for one line) ---
     if odefs:
         print(f"outputs ({len(odefs)}, {computed} computed):")
         for o in odefs:
             kind_o = o.get("kind", "?")
-            name = o.get("name") or o.get("signal") or "(unnamed)"
+            name = o.get("name") or o.get("signal") or "unnamed"
             if kind_o == "computed":
                 expr = o.get("expr", "")
                 if len(expr) > 80:
                     expr = expr[:77] + "..."
-                print(f"  {name} = {expr}")
+                print(f"  [{name}] {expr}")
             else:
                 t = o.get("type") or ""
-                print(f"  {name} = save-only ({t})")
+                print(f"  [{name}] save-only ({t})")
 
     # --- Latest run paths (for grep / inspection) ---
     # The .log lives in the OA library at a deterministic path; the

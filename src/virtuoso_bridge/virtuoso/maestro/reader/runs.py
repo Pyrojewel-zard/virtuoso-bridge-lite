@@ -562,16 +562,22 @@ let((root result)
 
 def read_latest_history(client: VirtuosoClient, info: dict, *,
                         scratch_root: str | None = None,
-                        spectre_tail_lines: int = 40,
-                        log_cache_path: str | None = None,
-                        spectre_cache_path: str | None = None) -> dict:
-    """Parse the newest completed history's .log file + spectre.out tail.
+                        log_cache_path: str | None = None) -> dict:
+    """Light parse of the newest history's ``.log`` file.
 
-    Picks the highest-N history (with actual scratch data when
-    ``scratch_root`` is provided).  Returns empty dict if no candidate.
+    Picks the highest-N history (preferring one with actual scratch data
+    when ``scratch_root`` is supplied).  Returns ``{}`` if no candidate.
 
-    Cost: ~1 scp for the .log file, +1 scp for spectre.out (if
-    scratch_root given and run path is discoverable).
+    Cost: 1 scp for the ``.log`` file.  No per-run enrichment, no
+    ``spectre.out`` read — keep this lightweight.  The parsed log
+    already carries ``errors_count`` (from ``Number of simulation
+    errors: N``) which answers "did the latest run pass?" without
+    needing the spectre output.
+
+    Callers that want the raw ``spectre.out`` / ``input.scs`` /
+    ``modelFiles`` should fetch those separately (see
+    :func:`snapshot_to_dir`, which writes them into a
+    ``<history>/`` subdirectory of the snapshot dir).
     """
     lib_path = info.get("lib_path") or ""
     cell = info.get("cell") or ""
@@ -579,18 +585,14 @@ def read_latest_history(client: VirtuosoClient, info: dict, *,
     if not (lib_path and cell and view):
         return {}
 
-    # Pick the latest history
+    # Pick the latest history (prefer one with scratch data).
     hist_base_meta = f"{lib_path}/{cell}/{view}/results/maestro"
     latest = ""
-    runs_for_latest: list[dict] = []
-
     if scratch_root:
         per_hist = find_history_paths(client, info, scratch_root=scratch_root)
-        # Latest non-empty
         for entry in reversed(per_hist):
             if entry.get("runs"):
                 latest = entry["name"]
-                runs_for_latest = entry["runs"]
                 break
         if not latest and per_hist:
             latest = per_hist[-1]["name"]
@@ -598,20 +600,18 @@ def read_latest_history(client: VirtuosoClient, info: dict, *,
         hl = info.get("history_list") or []
         if hl:
             latest = hl[-1]
-
     if not latest:
         return {}
 
-    # Download + parse .log
+    # Download + parse .log only.
     log_remote = f"{hist_base_meta}/{latest}.log"
     try:
         log_text = read_remote_file(client, log_remote, local_path=log_cache_path)
     except Exception:
         log_text = ""
-
     parsed = parse_history_log(log_text) if log_text else {}
 
-    out: dict = {
+    return {
         "history_name": latest,
         **parsed,
         "metadata_files": {
@@ -620,32 +620,3 @@ def read_latest_history(client: VirtuosoClient, info: dict, *,
             "msg_db": f"{hist_base_meta}/{latest}.msg.db",
         },
     }
-
-    if runs_for_latest:
-        # Per-run enrichment: corner / temperature / psf files (one batched SKILL call).
-        out["scratch_runs"] = _enrich_runs_metadata(client, runs_for_latest)
-
-        # spectre.out error/warning counts — scan run #1 (representative).
-        # Only emit the noisy tail text when errors > 0: on a successful run
-        # the last 40 lines are license banner + PSF-open ceremony, not
-        # useful diagnostic signal.
-        primary_spectre = runs_for_latest[0]["psf"]["spectre_out"]
-        try:
-            text = read_remote_file(client, primary_spectre,
-                                    local_path=spectre_cache_path)
-            lines = text.splitlines()
-            err = sum(1 for l in lines
-                      if "Error" in l or "*Error*" in l or "ERROR" in l)
-            warn = sum(1 for l in lines
-                       if "Warning" in l or "*Warning*" in l)
-            out["spectre_errors_count"] = err
-            out["spectre_warnings_count"] = warn
-            if err > 0:
-                out["spectre_tail"] = (
-                    lines[-spectre_tail_lines:]
-                    if len(lines) > spectre_tail_lines else lines
-                )
-        except Exception:
-            pass
-
-    return out

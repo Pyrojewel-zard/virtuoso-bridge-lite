@@ -167,12 +167,6 @@ def snapshot_to_dir(client: VirtuosoClient, *,
         snap_dir.mkdir(parents=True, exist_ok=True)
         local_sdb = snap_dir / "maestro.sdb"
 
-        # Persist the latest run's raw .log and spectre.out into the snap
-        # dir alongside the parsed JSON, instead of letting them go to a
-        # temp file that gets unlinked.  Caller can grep / diff them later.
-        log_local     = snap_dir / "latest_history.log"
-        spectre_local = snap_dir / "latest_history.spectre.out"
-
         # snapshot() now handles scratch_root auto-detection itself; just
         # pass the caller's value through (None = detect, "" = skip).
         snap = snapshot(
@@ -181,8 +175,6 @@ def snapshot_to_dir(client: VirtuosoClient, *,
             include_latest_history=include_latest_history,
             sdb_cache_path=str(local_sdb),
             scratch_root=scratch_root,
-            log_cache_path=str(log_local) if include_latest_history else None,
-            spectre_cache_path=str(spectre_local) if include_latest_history else None,
         )
         # Back-compat alias: old field name from when detection lived here.
         snap["scratch_root_detected"] = snap.get("scratch_root")
@@ -216,6 +208,45 @@ def snapshot_to_dir(client: VirtuosoClient, *,
                 "errors_count":     latest.get("errors_count"),
                 "points_completed": latest.get("points_completed"),
             }
+
+            # Latest run artifacts: pull raw .log + spectre.out + input.scs
+            # into a `<history_name>/` subfolder so the user can inspect
+            # them post-hoc.  Use original filenames where they're
+            # informative; the subfolder name carries the history.
+            history_name = latest.get("history_name") or ""
+            run_paths = None
+            if histories and history_name:
+                for h in histories:
+                    if h.get("name") == history_name and h.get("runs"):
+                        run_paths = h["runs"][0]   # primary run
+                        break
+
+            if history_name and run_paths:
+                hist_dir = snap_dir / history_name
+                hist_dir.mkdir(parents=True, exist_ok=True)
+
+                # Each scp is best-effort: a missing file shouldn't break
+                # the whole snapshot.
+                log_remote = (latest.get("metadata_files") or {}).get("log") or ""
+                if log_remote:
+                    try:
+                        client.download_file(log_remote, str(hist_dir / f"{history_name}.log"))
+                    except Exception:
+                        pass
+
+                spectre_remote = (run_paths.get("psf") or {}).get("spectre_out") or ""
+                if spectre_remote:
+                    try:
+                        client.download_file(spectre_remote, str(hist_dir / "spectre.out"))
+                    except Exception:
+                        pass
+
+                netlist_remote = (run_paths.get("netlist") or {}).get("input_scs") or ""
+                if netlist_remote:
+                    try:
+                        client.download_file(netlist_remote, str(hist_dir / "input.scs"))
+                    except Exception:
+                        pass
 
         (snap_dir / "snapshot.json").write_text(
             json.dumps(snap, indent=2, ensure_ascii=False, default=str),
@@ -280,8 +311,7 @@ def snapshot(client: VirtuosoClient, *,
              include_latest_history: bool = True,
              sdb_cache_path: str | None = None,
              scratch_root: str | None = None,
-             log_cache_path: str | None = None,
-             spectre_cache_path: str | None = None) -> dict:
+             log_cache_path: str | None = None) -> dict:
     """Aggregate snapshot of the currently-focused maestro session.
 
     Always uses the focused window (``hiGetCurrentWindow()``) as the
@@ -412,6 +442,5 @@ def snapshot(client: VirtuosoClient, *,
             out["latest_history"] = read_latest_history(
                 client, info, scratch_root=scratch_root,
                 log_cache_path=log_cache_path,
-                spectre_cache_path=spectre_cache_path,
             )
         return out
