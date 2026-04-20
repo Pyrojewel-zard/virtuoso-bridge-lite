@@ -9,12 +9,19 @@ Usage:
 
     # Any component via **kwargs
     set_instance_params(client, "I0", idc="100u")           # current source
-    set_instance_params(client, "V0", vdc="1.8", vac="1")   # voltage source
+    set_instance_params(client, "V0", vdc="1.8")            # voltage source
     set_instance_params(client, "R0", r="10k")              # resistor
     set_instance_params(client, "C0", c="1p")               # capacitor
 
     # Optional CDF filter allowlist + strict mode
     set_instance_params(client, "L0", l="500p", r="0", strict=True)
+
+Note:
+    By default ``param_filters`` points at ``cdf_param_filters.yaml`` and
+    params outside the per-cell allowlist are dropped with a warning
+    (or raise ``ValueError`` under ``strict=True``).  Pass
+    ``param_filters=None`` to apply every kwarg verbatim.  The function
+    also runs ``schCheck`` + ``dbSave`` — changes persist immediately.
 """
 
 from __future__ import annotations
