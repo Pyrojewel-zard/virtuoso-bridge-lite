@@ -123,21 +123,19 @@ _PROBES_TEMPLATE: tuple[str, ...] = (
     'maeGetCurrentRunMode(?session "{sess}")',
     'maeGetJobControlMode(?session "{sess}")',
     'errset(maeGetRunPlan(?session "{sess}"))',
-    # Current-loaded history NAME (not just the object/id) — the ground
-    # truth for "which history did the user just run / load".  nil if
-    # no history is currently loaded in this session.
-    'errset(let((h) h=axlGetCurrentHistory("{sess}") when(h h~>name)))',
+    # Currently-loaded history name (ground truth for "which history is
+    # the user looking at").  IC6.1.8 returns a runHistory object whose
+    # ~>name is often nil; try a couple of alternative accessors and
+    # surface whichever yields a non-nil string.
+    'errset(let((h) h=axlGetCurrentHistory("{sess}") '
+        'when(h list(h~>name h~>historyName h~>run h~>runName))))',
     'errset(maeGetSimulationMessages(?session "{sess}" ?msgType "error"))',
     'errset(maeGetSimulationMessages(?session "{sess}" ?msgType "warning"))',
     'errset(maeGetSimulationMessages(?session "{sess}" ?msgType "info"))',
-    # results/maestro/ listing with mtimes.  Gives us both the plain
-    # file list (backward compat) and per-file timestamps for
-    # time-based "latest history" selection when the current-loaded
-    # probe above returns nil (e.g. after a fresh session open).
-    'errset(let((d fs) '
-        'd = strcat(ddGetObj("{lib}")~>readPath "/{cell}/{view}/results/maestro") '
-        'fs = getDirFiles(d) '
-        'when(fs mapcar(lambda((f) list(f getFileWriteTime(strcat(d "/" f)))) fs))))',
+    # Plain file listing (works on every IC version). Mtime-based
+    # ordering is filled in by a separate shell call in bundle.py
+    # because SKILL's getFileWriteTime is unavailable in some builds.
+    'getDirFiles(strcat(ddGetObj("{lib}")~>readPath "/{cell}/{view}/results/maestro"))',
     'errset(asiGetAnalogRunDir(asiGetSession("{sess}")))',
 )
 
@@ -192,25 +190,19 @@ def full_bundle(client: VirtuosoClient, *,
 
     # Convenience fields snapshot()'s disk-dump path computation needs.
     # All extracted from the same raw_sections (no extra SKILL).
-    import re as _re
     lib_path = ""
     scratch_root = ""
     current_history = ""
-    hist_files_mtime: list[tuple[str, int]] = []
+    hist_files: list[str] = []
     for label, raw in zip(probes, outputs):
         if label.startswith('ddGetObj('):
             lib_path = (raw or "").strip().strip('"')
         elif label.startswith('errset(let((h) h=axlGetCurrentHistory'):
-            val = _unwrap_errset(raw).strip()
-            if val and val != "nil":
-                current_history = val.strip('"')
-        elif label.startswith("errset(let((d fs)"):
-            # Parse ( ("file1" 12345) ("file2" 23456) ... )
-            val = _unwrap_errset(raw)
-            hist_files_mtime = [
-                (fn, int(mt)) for fn, mt in
-                _re.findall(r'\("([^"]+)"\s+(\d+)\)', val)
-            ]
+            # Probe returned list(~>name ~>historyName ~>run ~>runName);
+            # pick the first non-nil string value.
+            current_history = _first_nonnil_string(_unwrap_errset(raw))
+        elif label.startswith("getDirFiles("):
+            hist_files = _parse_skill_str_list(_unwrap_errset(raw))
         elif label.startswith("errset(asiGetAnalogRunDir"):
             run_dir = _unwrap_errset(raw).strip().strip('"')
             marker = f"/{lib}/{cell}/{view}/results/maestro"
@@ -218,12 +210,58 @@ def full_bundle(client: VirtuosoClient, *,
             if idx > 0:
                 scratch_root = run_dir[:idx]
 
+    # mtime-augmented listing via a single shell call (SKILL's
+    # getFileWriteTime isn't universally available).  Used only if
+    # current_history is empty — otherwise we skip the ssh trip.
+    hist_files_mtime: list[tuple[str, int]] = []
+    if lib_path and hist_files and not current_history:
+        hist_files_mtime = _fetch_mtimes_via_shell(
+            client, f"{lib_path}/{cell}/{view}/results/maestro",
+        )
+
     return {
         "raw_sections":     list(zip(probes, outputs)),
         "test":             test,
         "current_history":  current_history,
-        "hist_files":       [fn for fn, _mt in hist_files_mtime],
+        "hist_files":       hist_files,
         "hist_files_mtime": hist_files_mtime,
         "lib_path":         lib_path,
         "scratch_root":     scratch_root,
     }
+
+
+def _first_nonnil_string(val: str) -> str:
+    """From a SKILL list like ``("x" nil nil "y")`` (or ``nil`` / ``""``),
+    return the first non-nil quoted string value, else ``""``."""
+    import re as _re
+    m = _re.findall(r'"([^"]*)"', val or "")
+    for s in m:
+        if s:
+            return s
+    return ""
+
+
+def _fetch_mtimes_via_shell(client: VirtuosoClient, remote_dir: str,
+                             ) -> list[tuple[str, int]]:
+    """``find -printf`` → ``[(basename, unix_mtime), ...]`` via one
+    ssh round-trip.  Returns ``[]`` on any failure (caller falls back
+    to natural-sort-by-name)."""
+    import re as _re
+    runner = getattr(getattr(client, "_tunnel", None), "_ssh_runner", None)
+    if runner is None:
+        return []
+    # %T@ prints unix mtime as a float; %f is basename. '\n' between
+    # rows, ' ' between fields.
+    cmd = (f"find {remote_dir} -maxdepth 1 -type f "
+           f"-printf '%T@ %f\\n' 2>/dev/null")
+    try:
+        r = runner.run_command(cmd, timeout=15)
+    except Exception:
+        return []
+    out = (r.stdout or "") if hasattr(r, "stdout") else ""
+    pairs: list[tuple[str, int]] = []
+    for line in out.splitlines():
+        m = _re.match(r"^(\d+)(?:\.\d+)?\s+(.+)$", line.strip())
+        if m:
+            pairs.append((m.group(2), int(m.group(1))))
+    return pairs
