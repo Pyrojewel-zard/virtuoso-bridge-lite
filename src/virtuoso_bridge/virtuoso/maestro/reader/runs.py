@@ -2,22 +2,27 @@
 
 Two public entry points:
 
-- :func:`read_results` — open the latest history in GUI mode and pull
-  every output value + spec status + overall yield as structured data.
-  This is *consumption-time* data (numbers users compute on), so the
-  return is a dict — distinct from snapshot's "describe the setup"
-  flow which keeps SKILL outputs as raw text.
+- :func:`read_results` — export Cadence's "Detail" results CSV
+  (per-point × per-output table) for the latest valid history,
+  parse it into a per-point structure.  This is *consumption-time*
+  data (numbers users compute on), so the return is a dict —
+  distinct from snapshot's "describe the setup" flow which keeps
+  SKILL outputs as raw text.
 - :func:`export_waveform` — call OCEAN's ``ocnPrint`` to dump one
   expression's waveform to a local text file via scp.
 """
 
 from __future__ import annotations
 
+import csv
 import re
+import tempfile
+import uuid
+from pathlib import Path
 
 from virtuoso_bridge import VirtuosoClient
 
-from ._parse_skill import _parse_sexpr, _parse_skill_str_list
+from ._parse_skill import _parse_skill_str_list
 from ._skill import _q, _get_test, _unique_remote_wave_path
 from .session import natural_sort_histories
 
@@ -31,38 +36,53 @@ def read_results(client: VirtuosoClient, session: str,
                   history: str = "",
                   *,
                   include_raw: bool = False) -> dict:
-    """Read simulation results: output values, spec status, yield.
+    """Read simulation results: per-point × per-output values + specs.
 
-    Requires GUI mode (``deOpenCellView`` + ``maeMakeEditable``).
-    Finds the latest valid history by walking the results dir
-    newest-first (covers Interactive.N, sweep_*, ExplorerRun.*, any
-    user-named history).  Returns ``{}`` if no results are available.
+    Uses Cadence's ``maeExportOutputView ?view "Detail"`` to dump the
+    full results table to CSV, scp's it back, and parses into a
+    per-point structure.  This is the canonical "all points × all
+    outputs" view — vs ``maeGetOutputValue`` which only gives the
+    currently-selected point and ``.log`` which shows only the
+    "best" point.
+
+    Requires GUI mode (Cadence's expression evaluator must be live).
+    Finds the latest valid history if ``history=`` not given.
 
     Returns::
 
         {
-          "history":       "Interactive.7",
-          "tests":         [test_name, ...],
-          "outputs":       [{"test", "name", "value", "spec_status"}, ...],
+          "history": "Interactive.7",
+          "tests":   [test_name, ...],
+          "points":  [
+            {"point": 1,
+             "parameters": {"VDD": "0.9", ...},
+             "outputs":    {"Gain_dB": {"value": "21.63",
+                                        "spec": "", "weight": "",
+                                        "pass_fail": ""}, ...}},
+            {"point": 2, ...},
+          ],
           "overall_spec":  "passed" | "failed" | None,
-          "overall_yield": "100" | None,
+          "overall_yield": "(nil Yield 100 PassedPoints 3 ...)" | None,
         }
 
-    With ``include_raw=True`` the raw SKILL output strings (pre-parse)
-    are attached under ``"raw"`` for debug / audit.
+    For back-compat, ``"outputs": [...]`` is also emitted as the
+    flattened (test, name, value, spec_status) list across all points.
+
+    With ``include_raw=True`` the raw exported CSV text is attached
+    under ``"raw_csv"`` for debug / audit.
 
     Args:
         session: active session string
         lib: library name (auto-detected if empty)
         cell: cell name (auto-detected if empty)
-        history: explicit history name (preferred, e.g. "Interactive.7").
-            If empty, falls back to scanning latest valid Interactive.N.
-        include_raw: attach raw SKILL output strings under ``"raw"``.
+        history: explicit history name; otherwise picks the latest
+            history that has results.
+        include_raw: include raw CSV text under ``"raw_csv"``.
     """
     def q(label, expr):
         return _q(client, label, expr)
 
-    # Get lib/cell if not provided
+    # Auto-detect lib/cell from session env if not provided.
     if not lib or not cell:
         test = _get_test(client, session)
         if test:
@@ -74,123 +94,174 @@ def read_results(client: VirtuosoClient, session: str,
                 r = client.execute_skill(
                     f'maeGetEnvOption("{test}" ?option "cell" ?session "{session}")')
                 cell = (r.output or "").strip('"')
-
     if not lib or not cell:
         return {}
 
     test = _get_test(client, session)
+    if not test:
+        return {}
+
+    # Pick the latest history with actual results (newest-first scan).
     if history:
         latest_history = history.strip()
     else:
-        # List the maestro results directory, accept any history name
-        # (Interactive.N, sweep_*, ExplorerRun.*, user-named).  Anchor
-        # on the ``<name>.rdb`` metadata file via natural_sort_histories.
-        r = client.execute_skill(
-            f'let((p d) '
-            f'p = ddGetObj("{lib}")~>readPath '
-            f'd = strcat(p "/{cell}/maestro/results/maestro") '
-            f'if(isDir(d) getDirFiles(d) nil))'
-        )
-        files = _parse_skill_str_list(r.output or "")
-        hist_list = natural_sort_histories(files)
-        latest_history = ""
-        # Natural-sort puts oldest-first; walk newest-first.
-        for h in reversed(hist_list):
-            r = client.execute_skill(
-                f'when(maeOpenResults(?history "{h}") '
-                f'  let((outs) '
-                f'    outs = maeGetResultOutputs(?testName "{test}") '
-                f'    maeCloseResults() '
-                f'    outs))'
-            )
-            out = (r.output or "").strip()
-            if out and out != "nil":
-                latest_history = h
-                break
-
+        latest_history = _find_latest_history_with_results(
+            client, lib=lib, cell=cell, test=test)
     if not latest_history or latest_history == "nil":
         return {}
 
-    # Open the valid history
-    open_expr = f'maeOpenResults(?history "{latest_history}")'
-    opened = q("maeOpenResults", open_expr)
-    if not opened or opened.strip('"') in ("nil", ""):
+    # Export the full Detail table to a remote tmp CSV; scp; parse.
+    remote_csv = f"/tmp/vb_results_{uuid.uuid4().hex}.csv"
+    export_cmd = (
+        f'maeExportOutputView('
+        f'  ?session "{session}"'
+        f'  ?testName "{test}"'
+        f'  ?historyName "{latest_history}"'
+        f'  ?view "Detail"'
+        f'  ?fileName "{remote_csv}"'
+        f')'
+    )
+    r = q("maeExportOutputView", export_cmd)
+    if not r or "/tmp/" not in r:
         return {}
 
-    # Raw SKILL captures — kept in a side-channel for debug / include_raw.
-    raw_tests  = q("maeGetResultTests",   'maeGetResultTests()')
-    # Returns: ((test outputName value specStatus) ...) — flat entries.
-    raw_values = q("maeGetOutputValues", '''
-let((tests info)
-  info = list()
-  tests = maeGetResultTests()
-  foreach(test tests
-    let((outputs)
-      outputs = maeGetResultOutputs(?testName test)
-      foreach(outName outputs
-        let((val spec)
-          val = maeGetOutputValue(outName test)
-          spec = maeGetSpecStatus(outName test)
-          info = append1(info list(test outName val spec))
-        )
-      )
-    )
-  )
-  info
-)
-''')
+    local_csv = Path(tempfile.gettempdir()) / f"vb_results_{uuid.uuid4().hex}.csv"
+    csv_text = ""
+    try:
+        client.download_file(remote_csv, str(local_csv))
+        csv_text = local_csv.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return {}
+    finally:
+        try:
+            local_csv.unlink()
+        except OSError:
+            pass
+        # Best-effort remote cleanup.
+        try:
+            client.execute_skill(f'deleteFile("{remote_csv}")')
+        except Exception:
+            pass
+
     raw_overall = q("maeGetOverallSpecStatus", 'maeGetOverallSpecStatus()')
     raw_yield   = q("maeGetOverallYield",
                     f'maeGetOverallYield("{latest_history}")')
-    client.execute_skill('maeCloseResults()')
 
-    structured = _parse_results(
-        raw_tests=raw_tests, raw_values=raw_values,
-        raw_overall=raw_overall, raw_yield=raw_yield,
-        history=latest_history,
-    )
+    structured = _parse_detail_csv(csv_text, history=latest_history)
+    structured["overall_spec"]  = _unquote_atom(raw_overall)
+    structured["overall_yield"] = _unquote_atom(raw_yield)
     if include_raw:
-        structured["raw"] = {
-            "maeGetResultTests":        raw_tests,
-            "maeGetOutputValues":       raw_values,
-            "maeGetOverallSpecStatus":  raw_overall,
-            "maeGetOverallYield":       raw_yield,
-        }
+        structured["raw_csv"] = csv_text
     return structured
 
 
-def _parse_results(*, raw_tests: str, raw_values: str,
-                    raw_overall: str, raw_yield: str,
-                    history: str) -> dict:
-    """Pure: decode the four SKILL result strings into a structured dict."""
-    tests = _parse_skill_str_list(raw_tests)
+def _find_latest_history_with_results(client: VirtuosoClient, *,
+                                       lib: str, cell: str, test: str) -> str:
+    """Scan the results dir newest-first; return the first history
+    that successfully opens with at least one result output.  Returns
+    ``""`` when none qualify."""
+    r = client.execute_skill(
+        f'let((p d) '
+        f'p = ddGetObj("{lib}")~>readPath '
+        f'd = strcat(p "/{cell}/maestro/results/maestro") '
+        f'if(isDir(d) getDirFiles(d) nil))'
+    )
+    files = _parse_skill_str_list(r.output or "")
+    hist_list = natural_sort_histories(files)
+    for h in reversed(hist_list):
+        r = client.execute_skill(
+            f'when(maeOpenResults(?history "{h}") '
+            f'  let((outs) '
+            f'    outs = maeGetResultOutputs(?testName "{test}") '
+            f'    maeCloseResults() '
+            f'    outs))'
+        )
+        out = (r.output or "").strip()
+        if out and out != "nil":
+            return h
+    return ""
 
-    outputs: list[dict] = []
-    parsed = _parse_sexpr(raw_values.strip())
-    if isinstance(parsed, list):
-        for entry in parsed:
-            if isinstance(entry, list) and len(entry) >= 4:
-                test_n, name, value, spec = entry[:4]
-                outputs.append({
-                    "test":        test_n if isinstance(test_n, str) else "",
-                    "name":        name if isinstance(name, str) else "",
-                    "value":       "" if value is None else str(value),
-                    "spec_status": "" if spec is None else str(spec),
-                })
 
-    def _unquote_atom(raw: str) -> str | None:
-        s = (raw or "").strip().strip('"')
-        if not s or s.lower() == "nil":
-            return None
-        return s
+# CSV shape from ``maeExportOutputView ?view "Detail"``::
+#
+#     ,,Parameter,Nominal,,,
+#     <blank>
+#     Point,Test,Output,Nominal,Spec,Weight,Pass/Fail
+#     Parameters: KEY=VAL,,,,,,
+#     <point#>,<test>,<output_name_or_expr>,<value>,<spec>,<weight>,<pass_fail>
+#     ...   (one block per point)
+#
+# A "Parameters: ..." row marks the start of each new point.
+
+def _parse_detail_csv(text: str, *, history: str) -> dict:
+    """Parse maeExportOutputView Detail CSV → per-point dict.  Pure."""
+    points: list[dict] = []
+    current: dict | None = None
+    tests_seen: set[str] = set()
+
+    reader = csv.reader(text.splitlines())
+    for row in reader:
+        if not row or not any(c.strip() for c in row):
+            continue
+        first = (row[0] or "").strip()
+        if first.startswith("Parameters:"):
+            # Start a new point.  Parse "Parameters: K1=V1, K2=V2, ..."
+            params_text = first[len("Parameters:"):].strip()
+            params: dict[str, str] = {}
+            for kv in params_text.split(","):
+                kv = kv.strip()
+                if "=" in kv:
+                    k, _, v = kv.partition("=")
+                    params[k.strip()] = v.strip()
+            current = {"point": len(points) + 1,
+                       "parameters": params, "outputs": {}}
+            points.append(current)
+            continue
+        # Skip header / non-data rows
+        if first in ("", "Point") or not first.isdigit():
+            continue
+        # Data row: point, test, output, nominal, spec, weight, pass_fail
+        if current is None:
+            current = {"point": int(first), "parameters": {}, "outputs": {}}
+            points.append(current)
+        # Cadence sometimes inserts cells with quoted commas; csv module
+        # handles the quoting so columns line up.
+        cols = row + [""] * (7 - len(row))
+        _, test_n, name, value, spec, weight, pass_fail = cols[:7]
+        if test_n:
+            tests_seen.add(test_n.strip())
+        if name.strip():
+            current["outputs"][name.strip()] = {
+                "value":     value.strip(),
+                "spec":      spec.strip(),
+                "weight":    weight.strip(),
+                "pass_fail": pass_fail.strip(),
+            }
+
+    # Back-compat flat list: (test, name, value, spec_status) per point×output.
+    flat_outputs: list[dict] = []
+    for p in points:
+        for name, info in p["outputs"].items():
+            flat_outputs.append({
+                "point":       p["point"],
+                "name":        name,
+                "value":       info["value"],
+                "spec_status": info["pass_fail"],
+            })
 
     return {
-        "history":       history,
-        "tests":         tests,
-        "outputs":       outputs,
-        "overall_spec":  _unquote_atom(raw_overall),
-        "overall_yield": _unquote_atom(raw_yield),
+        "history": history,
+        "tests":   sorted(tests_seen),
+        "points":  points,
+        "outputs": flat_outputs,
     }
+
+
+def _unquote_atom(raw: str) -> str | None:
+    s = (raw or "").strip().strip('"')
+    if not s or s.lower() == "nil":
+        return None
+    return s
 
 
 # ---------------------------------------------------------------------------

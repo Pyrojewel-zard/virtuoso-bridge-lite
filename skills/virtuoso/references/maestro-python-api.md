@@ -128,21 +128,37 @@ pulled the XML to disk by other means.
 
 `maestro/reader/runs.py`
 
-### read_results — scalar output values + spec status
+### read_results — per-point × per-output results
+
+Internally calls `maeExportOutputView ?view "Detail"` to dump the
+full Cadence result table to CSV, downloads it, parses into a
+per-point structure.  This is the *all points × all outputs* view —
+unlike `maeGetOutputValue` (only the currently-selected point) or
+the `.log` summary (only the "best" point).
 
 ```python
 results = read_results(client, session, lib="myLib", cell="myTB")
 # {
-#   "history":       "Interactive.7",
-#   "tests":         ["TB_OTA", ...],
-#   "outputs":       [{"test", "name", "value", "spec_status"}, ...],
+#   "history": "Interactive.7",
+#   "tests":   ["TB_OTA"],
+#   "points":  [
+#     {"point": 1,
+#      "parameters": {"VDD": "0.9", "CONFIG/...": "calibre"},
+#      "outputs":    {"Gain_dB": {"value": "21.63",
+#                                  "spec": "", "weight": "",
+#                                  "pass_fail": ""},
+#                     ...}},
+#     {"point": 2, ...},
+#   ],
+#   "outputs":       [...],   # back-compat flat list across points
 #   "overall_spec":  "passed" | "failed" | None,
-#   "overall_yield": "100" | None,
+#   "overall_yield": "(nil Yield 100 PassedPoints 3 ...)" | None,
 # }
 ```
 
-GUI mode required (`maeOpenResults`).  Auto-detects latest valid
-history if `history=` not given.
+GUI mode required (`maeOpenResults`).  Auto-detects the latest valid
+history if `history=` not given.  Pass `include_raw=True` to attach
+the raw exported CSV under `"raw_csv"`.
 
 ### export_waveform — OCEAN waveform export
 
