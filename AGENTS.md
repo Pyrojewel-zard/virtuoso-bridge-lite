@@ -245,14 +245,13 @@ virtuoso-bridge screenshot      # screenshot CIW (or: current, N)
 virtuoso-bridge dismiss-dialog  # dismiss blocking GUI dialogs via X11
 ```
 
-## Build & test
+## Build
 
 > **Recommended: use `uv` to manage the virtual environment.** `uv` refuses to install packages globally (unless `--system` is explicitly passed), preventing accidental pollution of the system Python.
 
 ```bash
 uv venv .venv && source .venv/bin/activate   # Windows: source .venv/Scripts/activate
-uv pip install -e ".[dev]"
-pytest
+uv pip install -e .
 ```
 
 ## Windows: fix symlinks

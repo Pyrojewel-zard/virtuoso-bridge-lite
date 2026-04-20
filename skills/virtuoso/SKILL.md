@@ -150,11 +150,11 @@ Load on demand — each contains detailed API docs and edge-case guidance:
 | `references/layout-skill-api.md` | Layout SKILL API, read/query, mosaic, layer control |
 | `references/layout-python-api.md` | LayoutEditor, LayoutOps, shape/via/instance creation |
 | `references/maestro-skill-api.md` | mae* SKILL functions, OCEAN, corners, known blockers |
-| `references/maestro-python-api.md` | snapshot() (raw SKILL sections) + filter_*_xml + writer functions |
+| `references/maestro-python-api.md` | snapshot() (raw SKILL sections) + filter_*_xml + writer functions; read_results (per-point × per-output CSV) + export_waveform (OCEAN) |
 | `references/simulation-flow.md` | **Standard simulation flow** — 8-step guide, pitfalls, optimization loops |
 | `references/netlist.md` | CDL/Spectre netlist formats, spiceIn import |
 | `references/troubleshooting.md` | Known gotchas, GUI blocking, CDF quirks, connection issues |
-| `references/testbench-duplication.md` | Clone a testbench cell (schematic+config+maestro) to a new name — same lib or cross-lib |
+| `references/cellview-on-disk-layout.md` | What's inside each view on disk (`sch.oa`, `data.dm` binary format, `maestro.sdb`/`active.state` XML skeleton, lock files, SOS markers); which files are text-editable vs must go through DFII API |
 | `references/schematic-recreation.md` | Recreate schematic from existing design (grid layout, diff pair conventions) |
 | `references/batch-netlist-si.md` | Generate netlists without Maestro using si batch translator |
 
@@ -369,6 +369,8 @@ if not r.output or r.output.strip() in ("", "nil"):
     # If still stuck, user must manually dismiss the dialog in Virtuoso
 
 # 6. Read results
+# For per-point x per-output results across sweeps/corners -> use read_results
+# (see references/simulation-flow.md). For ad-hoc single-output reads:
 client.execute_skill(f'maeOpenResults(?history "{history}")', timeout=15)
 r = client.execute_skill(f'maeGetOutputValue("myOutput" "myTest")', timeout=30)
 value = float(r.output) if r.output else None

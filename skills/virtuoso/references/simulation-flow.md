@@ -159,7 +159,6 @@ foreach(s maeGetSessions() maeCloseSession(?session s ?forceClose t))
 | `maeCloseResults` leaves Maestro read-only | Next `maeRunSimulation` fails | Use `open_gui_session` to re-establish editable mode |
 | `maeCloseSession` on GUI-opened session | ASSEMBLER-8051: "opened from UI" | Use `close_gui_session` instead |
 | `window:N` in multi-line SKILL | `unbound variable - window` | Use `foreach(w hiGetWindowList() ...)` to find windows by `w~>windowNum` |
-| `read_results` returns empty | Outputs not in "saved outputs" list | Use `maeGetOutputValue` directly (see "Reading outputs manually" below) |
 
 ## Optimization loops
 
@@ -176,27 +175,3 @@ for val in ["1p", "2p", "5p", "10p"]:
 ```
 
 Add dialog recovery (`client.dismiss_dialog()`) in the loop if GUI dialogs may appear.
-
-## Reading outputs manually (when `read_results` returns empty)
-
-`read_results()` uses `maeGetResultOutputs` which only returns "saved outputs" configured in Maestro. For outputs that aren't in the saved list (e.g. PSS harmonics, custom expressions), read them directly:
-
-```python
-# Open results for a specific history
-client.execute_skill(f'maeOpenResults(?history "{history}")')
-
-# Read a specific output by name and test
-r = client.execute_skill(f'maeGetOutputValue("HD1_HD3" "IB_PSS")')
-value = float(r.output) if r.output and r.output != "nil" else None
-print(f"HD1/HD3 = {value}")
-
-# Read multiple outputs
-for output_name in ["HD1_HD3", "SFDR", "PN_1MHz"]:
-    r = client.execute_skill(f'maeGetOutputValue("{output_name}" "IB_PSS")')
-    print(f"  {output_name} = {r.output}")
-
-# Always close results when done
-client.execute_skill('maeCloseResults()')
-```
-
-**Note:** `maeOpenResults` / `maeCloseResults` may switch Maestro to read-only mode. If you need to run another simulation afterwards, use `open_gui_session` to re-establish editable mode.
