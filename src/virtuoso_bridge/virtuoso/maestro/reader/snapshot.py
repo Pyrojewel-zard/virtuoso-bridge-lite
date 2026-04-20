@@ -22,7 +22,8 @@ from virtuoso_bridge import VirtuosoClient
 
 from ._parse_sdb import _sdb_active_tests, filter_active_state_xml, filter_sdb_xml
 from .bundle import brief_bundle, full_bundle
-from .session import _fetch_window_state, natural_sort_histories
+from .session import (_fetch_window_state, natural_sort_histories,
+                      sort_histories_by_mtime)
 
 
 # ---------------------------------------------------------------------------
@@ -333,8 +334,23 @@ def snapshot(client: VirtuosoClient, *,
     if output_root is not None:
         if not sess:
             raise RuntimeError("No focused maestro window.")
-        latest_history = (natural_sort_histories(bundle.get("hist_files") or [])
-                          or [""])[-1]
+        # Pick "latest history" with three fallbacks, in order of
+        # semantic accuracy:
+        #   1. Session's currently-loaded history (from
+        #      ``axlGetCurrentHistory~>name``) — matches what the user
+        #      sees in the GUI's result panel.
+        #   2. Disk mtime — newest-modified history files win.  Handles
+        #      mixed-naming result dirs where alphabetic order would
+        #      pick a stale one.
+        #   3. Natural sort by name — last-resort deterministic
+        #      ordering when neither of the above yields anything.
+        latest_history = (
+            bundle.get("current_history") or
+            (sort_histories_by_mtime(bundle.get("hist_files_mtime") or [])
+             or [None])[0] or
+            (natural_sort_histories(bundle.get("hist_files") or [])
+             or [""])[-1]
+        )
         snap_dir = _dump_to_dir(
             client, bundle=bundle, lib=lib, cell=cell, view=view,
             sess=sess, latest_history=latest_history,

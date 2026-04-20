@@ -123,11 +123,21 @@ _PROBES_TEMPLATE: tuple[str, ...] = (
     'maeGetCurrentRunMode(?session "{sess}")',
     'maeGetJobControlMode(?session "{sess}")',
     'errset(maeGetRunPlan(?session "{sess}"))',
-    'errset(axlGetCurrentHistory("{sess}"))',
+    # Current-loaded history NAME (not just the object/id) — the ground
+    # truth for "which history did the user just run / load".  nil if
+    # no history is currently loaded in this session.
+    'errset(let((h) h=axlGetCurrentHistory("{sess}") when(h h~>name)))',
     'errset(maeGetSimulationMessages(?session "{sess}" ?msgType "error"))',
     'errset(maeGetSimulationMessages(?session "{sess}" ?msgType "warning"))',
     'errset(maeGetSimulationMessages(?session "{sess}" ?msgType "info"))',
-    'getDirFiles(strcat(ddGetObj("{lib}")~>readPath "/{cell}/{view}/results/maestro"))',
+    # results/maestro/ listing with mtimes.  Gives us both the plain
+    # file list (backward compat) and per-file timestamps for
+    # time-based "latest history" selection when the current-loaded
+    # probe above returns nil (e.g. after a fresh session open).
+    'errset(let((d fs) '
+        'd = strcat(ddGetObj("{lib}")~>readPath "/{cell}/{view}/results/maestro") '
+        'fs = getDirFiles(d) '
+        'when(fs mapcar(lambda((f) list(f getFileWriteTime(strcat(d "/" f)))) fs))))',
     'errset(asiGetAnalogRunDir(asiGetSession("{sess}")))',
 )
 
@@ -138,15 +148,19 @@ def full_bundle(client: VirtuosoClient, *,
 
     Returns::
 
-        {"raw_sections": [(probe_skill_text, raw_output), ...],
-         "test":   str,            # car(maeGetSetup) — for path derivation
-         "hist_files": [str, ...]} # for natural_sort_histories
+        {"raw_sections":       [(probe_skill_text, raw_output), ...],
+         "test":               str,   # car(maeGetSetup) — for path derivation
+         "current_history":    str,   # axlGetCurrentHistory~>name, "" if none
+         "hist_files":         [str, ...],                # filenames only
+         "hist_files_mtime":   [(fname, unix_mtime), ...] # same list + mtimes
+        }
 
     No alist→dict parsing.  The probe strings ARE the section labels;
     callers print ``raw_sections`` verbatim.
     """
     if not sess:
-        return {"raw_sections": [], "test": "", "hist_files": []}
+        return {"raw_sections": [], "test": "", "current_history": "",
+                "hist_files": [], "hist_files_mtime": []}
 
     # --- Round 1: discover the test name + enabled analyses ---
     # Both are needed to format the per-analysis probes in round 2 (so
@@ -178,14 +192,25 @@ def full_bundle(client: VirtuosoClient, *,
 
     # Convenience fields snapshot()'s disk-dump path computation needs.
     # All extracted from the same raw_sections (no extra SKILL).
+    import re as _re
     lib_path = ""
     scratch_root = ""
-    hist_files: list[str] = []
+    current_history = ""
+    hist_files_mtime: list[tuple[str, int]] = []
     for label, raw in zip(probes, outputs):
         if label.startswith('ddGetObj('):
             lib_path = (raw or "").strip().strip('"')
-        elif label.startswith("getDirFiles("):
-            hist_files = _parse_skill_str_list(_unwrap_errset(raw))
+        elif label.startswith('errset(let((h) h=axlGetCurrentHistory'):
+            val = _unwrap_errset(raw).strip()
+            if val and val != "nil":
+                current_history = val.strip('"')
+        elif label.startswith("errset(let((d fs)"):
+            # Parse ( ("file1" 12345) ("file2" 23456) ... )
+            val = _unwrap_errset(raw)
+            hist_files_mtime = [
+                (fn, int(mt)) for fn, mt in
+                _re.findall(r'\("([^"]+)"\s+(\d+)\)', val)
+            ]
         elif label.startswith("errset(asiGetAnalogRunDir"):
             run_dir = _unwrap_errset(raw).strip().strip('"')
             marker = f"/{lib}/{cell}/{view}/results/maestro"
@@ -194,9 +219,11 @@ def full_bundle(client: VirtuosoClient, *,
                 scratch_root = run_dir[:idx]
 
     return {
-        "raw_sections": list(zip(probes, outputs)),
-        "test":         test,
-        "hist_files":   hist_files,
-        "lib_path":     lib_path,
-        "scratch_root": scratch_root,
+        "raw_sections":     list(zip(probes, outputs)),
+        "test":             test,
+        "current_history":  current_history,
+        "hist_files":       [fn for fn, _mt in hist_files_mtime],
+        "hist_files_mtime": hist_files_mtime,
+        "lib_path":         lib_path,
+        "scratch_root":     scratch_root,
     }

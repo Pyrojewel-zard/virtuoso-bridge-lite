@@ -1,9 +1,16 @@
 """Window-state probes for the focused maestro session.
 
-Two internal helpers used by ``snapshot()`` and the CLI brief:
-``_fetch_window_state`` (1 SKILL call → focused title + davSession +
-window list + session list, title parsed into lib/cell/view/mode) and
-``natural_sort_histories`` (filter + sort a results/maestro listing).
+Helpers used by ``snapshot()`` and the CLI brief:
+
+* ``_fetch_window_state`` — 1 SKILL call → focused title + davSession
+  + window list + session list, title parsed into lib/cell/view/mode.
+* ``natural_sort_histories`` — filter a results/maestro listing for
+  history anchors and natural-sort by name.  Fragile when history
+  names mix numbered + custom prefixes; keep as last-resort fallback.
+* ``sort_histories_by_mtime`` — preferred ordering: sort histories by
+  their newest on-disk mtime.  Matches the "what did I last run"
+  intuition even when names mix Interactive.N / ExplorerRun.N /
+  custom strings.
 """
 
 from __future__ import annotations
@@ -105,6 +112,22 @@ def _fetch_window_state(client: VirtuosoClient) -> dict:
     }
 
 
+def _history_name_for_file(fname: str) -> str | None:
+    """Return the history name a file belongs to, or None if it's not a
+    history artifact.  Recognises ``<name>.rdb`` anchors, the three
+    companion extensions ``.log`` / ``.msg.db``, and bare
+    ``Interactive.N`` / ``MonteCarlo.N`` directories."""
+    if _HISTORY_RDB_RE.match(fname):
+        return fname[:-4]   # strip .rdb
+    if fname.endswith(".msg.db"):
+        return fname[:-len(".msg.db")]
+    if fname.endswith(".log"):
+        return fname[:-4]   # strip .log
+    if _HISTORY_DIR_RE.match(fname):
+        return fname
+    return None
+
+
 def natural_sort_histories(hist_files: list[str]) -> list[str]:
     """Extract + naturally-sort history names from a results/maestro listing.
 
@@ -126,3 +149,27 @@ def natural_sort_histories(hist_files: list[str]) -> list[str]:
         ]
 
     return sorted(seen, key=_natkey)
+
+
+def sort_histories_by_mtime(
+    hist_files_mtime: list[tuple[str, int]],
+) -> list[str]:
+    """Extract history names from a ``[(filename, mtime), ...]`` listing
+    and sort by newest mtime first.
+
+    A history is identified by its ``<name>.rdb`` anchor; companion
+    files (``<name>.log``, ``<name>.msg.db``) contribute too, and we
+    take the *maximum* mtime across all files of a given history as
+    that history's timestamp.  This handles the common mixed-naming
+    case where ``results/maestro/`` holds
+    ``Interactive.142..151.{rdb,log,msg.db}`` + ``ExplorerRun.0.*`` +
+    custom-named histories like ``calibre_rcc_norc_sch.*`` —
+    alphabetic / natural sort gives a meaningless "latest"; mtime
+    matches the user's "what did I last run" intuition.
+    """
+    bucket: dict[str, int] = {}
+    for fname, mtime in hist_files_mtime:
+        hist = _history_name_for_file(fname)
+        if hist is not None:
+            bucket[hist] = max(bucket.get(hist, 0), mtime)
+    return sorted(bucket, key=lambda h: bucket[h], reverse=True)
