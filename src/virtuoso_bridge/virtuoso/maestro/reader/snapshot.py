@@ -98,23 +98,30 @@ def _dump_skill_text(snap_dir: Path, sections: list[tuple[str, str]]) -> None:
         (snap_dir / "state_from_skill.txt").write_text(text, encoding="utf-8")
 
 
-# Per-point artifacts pulled into ``snap_dir/<history>/``.  Text only —
-# PSF binary waveforms / wavedb are huge and proprietary so we skip them.
-# Add to this tuple to capture more files; the tar packs everything in
-# one ssh round-trip regardless of count.
-_RUN_FILE_NAMES = ("input.scs", "spectre.out", "logFile")
+# Per-point artifacts pulled into ``snap_dir/<history>/``.  We keep
+# text (and small binary) files needed to reproduce / inspect a run;
+# we skip PSF waveform databases (``*.raw``, ``wavedb/``), which are
+# huge and proprietary.  Captured per point:
+#
+#   netlist/*          everything the Virtuoso netlister generates —
+#                      input.scs plus stimuli, include, modelpath,
+#                      control, runObjFile, cdfInst*, etc.
+#   psf/spectre.out    spectre stdout
+#   psf/logFile        spectre logFile
+#
+# Plus the OA history summary ``<history>.log`` at the maestro/results
+# level.
 
 
 def _dump_run_artifacts(client: VirtuosoClient, snap_dir: Path, *,
                          history: str, lib_path: str, scratch_root: str,
                          lib: str, cell: str, view: str) -> None:
-    """Pull every per-point ``input.scs`` / ``spectre.out`` / ``logFile``
+    """Pull per-point ``netlist/*`` + ``psf/spectre.out`` + ``psf/logFile``
     plus the OA ``.log`` for ``history`` into ``snap_dir/<history>/``.
 
     Single ssh round-trip: server-side ``find | tar`` packs all matched
     files into one tarball, one ``scp`` pulls it down, local extract
-    rebuilds the per-point layout.  N points × 3 files = 1 ssh + 1 scp
-    (vs N×3 scp's previously).
+    rebuilds the per-point layout.
     """
     if not (history and lib_path and scratch_root):
         return
@@ -124,12 +131,16 @@ def _dump_run_artifacts(client: VirtuosoClient, snap_dir: Path, *,
                    f"/results/maestro/{history}")
     remote_tar = f"/tmp/vb_snap_{uuid.uuid4().hex}.tar"
 
-    # find by exact name in the per-point subtree, then tar the matches
-    # plus the OA log file in absolute-path mode (-P).  All in one ssh.
-    name_clauses = " -o ".join(f'-name {n}' for n in _RUN_FILE_NAMES)
+    # Match clauses:
+    #   -path '*/netlist/*' — every file under any per-point netlist/ dir
+    #   -name spectre.out   — per-point psf/spectre.out
+    #   -name logFile       — per-point psf/logFile
+    # PSF waveforms (.raw, wavedb/) don't match any clause → skipped.
     tar_cmd = (
-        f'find {hist_remote} -type f \\( {name_clauses} \\) -print 2>/dev/null '
-        f'| tar -cf {remote_tar} -P -T - {log_remote} 2>/dev/null && echo OK'
+        f"find {hist_remote} -type f \\( "
+        f"-path '*/netlist/*' -o -name spectre.out -o -name logFile "
+        f"\\) -print 2>/dev/null "
+        f"| tar -cf {remote_tar} -P -T - {log_remote} 2>/dev/null && echo OK"
     )
     r = runner.run_command(tar_cmd, timeout=30)
     if "OK" not in (r.stdout or ""):
