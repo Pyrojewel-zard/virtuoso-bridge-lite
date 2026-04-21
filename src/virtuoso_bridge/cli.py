@@ -392,38 +392,41 @@ def _print_spectre_status(profile: str | None, suffix: str) -> None:
             return
         runner._verbose = False
 
-        # 1. Direct check — works if spectre is already on PATH.
-        # Wrap in `bash -c` so the command is interpreted by bash even
-        # when the remote user's login shell is csh/tcsh (sshd may
-        # invoke the login shell instead of honouring our `sh` target
-        # on some setups).
-        result = runner.run_command(
-            "bash -c 'which spectre 2>/dev/null && spectre -V 2>&1 | head -1'",
-            timeout=10,
+        # Two detection strategies, fused into a single SSH handshake:
+        #
+        #   (A) fast path: spectre already on PATH (bash-shell login,
+        #       or ssh server configured with Cadence env baked in)
+        #   (B) slow path: source VB_CADENCE_CSHRC inside csh, re-check
+        #
+        # Older revisions issued these as two separate SSH calls. On
+        # congested jump hosts / Windows without ControlMaster, each
+        # SSH is a fresh TCP + sshd fork, doubling the risk of banner-
+        # exchange timeouts that manifested as spurious "NOT FOUND".
+        # Bash parses ``A || B | C`` as ``A || (B | C)`` so the
+        # ``head -5`` only applies to the csh fallback — same semantics
+        # as before, one round-trip instead of two.
+        cadence_cshrc = (
+            os.getenv(f"VB_CADENCE_CSHRC{suffix}", "").strip()
+            or os.getenv("VB_CADENCE_CSHRC", "").strip()
         )
-        stdout = result.stdout.strip()
-
-        # 2. Fallback — source VB_CADENCE_CSHRC to set up PATH.
-        if not stdout:
-            cadence_cshrc = (
-                os.getenv(f"VB_CADENCE_CSHRC{suffix}", "").strip()
-                or os.getenv("VB_CADENCE_CSHRC", "").strip()
+        fast = "which spectre 2>/dev/null && spectre -V 2>&1 | head -1"
+        if cadence_cshrc:
+            # Keep csh script out of bash's view — ``!`` / backticks /
+            # ``$?VAR`` must reach csh verbatim.
+            csh_script = (
+                'if (! $?HOSTNAME) setenv HOSTNAME `hostname`; '
+                'if (! $?LD_LIBRARY_PATH) setenv LD_LIBRARY_PATH ""; '
+                f'source {cadence_cshrc}; '
+                'which spectre; '
+                'spectre -V'
             )
-            if cadence_cshrc:
-                # Build the csh script body then pass to `csh -c` via
-                # shlex.quote so the outer bash doesn't interpret csh's
-                # `!` / backticks / `$?VAR` before csh sees them.
-                csh_script = (
-                    'if (! $?HOSTNAME) setenv HOSTNAME `hostname`; '
-                    'if (! $?LD_LIBRARY_PATH) setenv LD_LIBRARY_PATH ""; '
-                    f'source {cadence_cshrc}; '
-                    'which spectre; '
-                    'spectre -V'
-                )
-                inner = f"csh -f -c {shlex.quote(csh_script)} 2>&1 | head -5"
-                check_cmd = f"bash -c {shlex.quote(inner)}"
-                result = runner.run_command(check_cmd, timeout=15)
-                stdout = result.stdout.strip()
+            slow = f"csh -f -c {shlex.quote(csh_script)} 2>&1 | head -5"
+            combined = f"{{ {fast}; }} || {{ {slow}; }}"
+        else:
+            combined = fast
+        check_cmd = f"bash -c {shlex.quote(combined)}"
+        result = runner.run_command(check_cmd, timeout=15)
+        stdout = result.stdout.strip()
 
         spectre_path = None
         version = None
