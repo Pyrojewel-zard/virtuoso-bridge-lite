@@ -206,10 +206,24 @@ def _dump_run_artifacts(client: VirtuosoClient, snap_dir: Path, *,
     # Maestro-level extra files (siblings of <history>.log):
     #   always:            <history>.log
     #   include_results:   <history>.rdb, <history>.msg.db
-    maestro_extras = [log_remote]
+    #
+    # List both project and scratch_root locations; tar
+    # --ignore-failed-read lets whichever path actually has the file
+    # win.  Explorer-derived `.RO` runs only have these companion
+    # files in scratch_root — without listing it here they'd be
+    # silently missing from the snapshot.
+    scratch_maestro_dir = f"{scratch_root}/{lib}/{cell}/{view}/results/maestro"
+    maestro_extras = [
+        log_remote,
+        f"{scratch_maestro_dir}/{history}.log",
+    ]
     if include_results:
-        maestro_extras.append(f"{maestro_dir}/{history}.rdb")
-        maestro_extras.append(f"{maestro_dir}/{history}.msg.db")
+        maestro_extras.extend([
+            f"{maestro_dir}/{history}.rdb",
+            f"{maestro_dir}/{history}.msg.db",
+            f"{scratch_maestro_dir}/{history}.rdb",
+            f"{scratch_maestro_dir}/{history}.msg.db",
+        ])
     extras_str = " ".join(maestro_extras)
 
     tar_cmd = (
@@ -334,20 +348,21 @@ def snapshot(client: VirtuosoClient, *,
     if output_root is not None:
         if not sess:
             raise RuntimeError("No focused maestro window.")
-        # Pick "latest history" with three fallbacks, in order of
-        # semantic accuracy:
-        #   1. Session's currently-loaded history (from
-        #      ``axlGetCurrentHistory~>name``) — matches what the user
-        #      sees in the GUI's result panel.
-        #   2. Disk mtime — newest-modified history files win.  Handles
-        #      mixed-naming result dirs where alphabetic order would
-        #      pick a stale one.
-        #   3. Natural sort by name — last-resort deterministic
-        #      ordering when neither of the above yields anything.
+        # Pick "latest history" — prefer mtime, because the user's
+        # intuition of "newest" is "what I last ran", not "what the GUI
+        # result panel happens to have loaded".  axlGetCurrentHistory
+        # sticks to an earlier Explorer run when the user has since
+        # launched an Interactive sim without re-loading its results;
+        # mtime reflects the actual latest run on disk.
+        #
+        # Fallbacks in order:
+        #   1. Disk mtime — newest-modified history files win.
+        #   2. Session's currently-loaded history (axlGetCurrentHistory~>name).
+        #   3. Natural sort by name.
         latest_history = (
-            bundle.get("current_history") or
             (sort_histories_by_mtime(bundle.get("hist_files_mtime") or [])
              or [None])[0] or
+            bundle.get("current_history") or
             (natural_sort_histories(bundle.get("hist_files") or [])
              or [""])[-1]
         )
@@ -357,5 +372,6 @@ def snapshot(client: VirtuosoClient, *,
             output_root=output_root,
         )
         out["output_dir"] = str(snap_dir)
+        out["latest_history"] = latest_history
 
     return out

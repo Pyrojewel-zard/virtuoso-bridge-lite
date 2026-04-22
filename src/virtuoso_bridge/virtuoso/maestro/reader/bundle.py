@@ -211,13 +211,33 @@ def full_bundle(client: VirtuosoClient, *,
                 scratch_root = run_dir[:idx]
 
     # mtime-augmented listing via a single shell call (SKILL's
-    # getFileWriteTime isn't universally available).  Used only if
-    # current_history is empty — otherwise we skip the ssh trip.
+    # getFileWriteTime isn't universally available).  Always collected
+    # now — snapshot() prefers mtime over current_history, and with
+    # persistent SSH shell this extra trip is ~20 ms.  Skipping it
+    # caused snapshot to follow a stale GUI-loaded history
+    # (e.g. ExplorerRun.0) instead of the actual newest run.
+    #
+    # We scan *two* locations and merge:
+    #   project maestro  — the authoritative history DB for runs that
+    #                      checkpoint back (regular Interactive.N, etc.)
+    #   scratch_root maestro — where Explorer-derived `.RO` runs and
+    #                          any run that stays local-only materialize.
+    # Without the scratch side, `.RO` histories (which live only there)
+    # are invisible to snapshot() and it falls back to the stale
+    # project-side mtime champion.
     hist_files_mtime: list[tuple[str, int]] = []
-    if lib_path and hist_files and not current_history:
+    if lib_path and hist_files:
         hist_files_mtime = _fetch_mtimes_via_shell(
             client, f"{lib_path}/{cell}/{view}/results/maestro",
         )
+    if scratch_root:
+        scratch_maestro = f"{scratch_root}/{lib}/{cell}/{view}/results/maestro"
+        scratch_mtimes = _fetch_mtimes_via_shell(client, scratch_maestro)
+        seen = {f for f, _ in hist_files_mtime}
+        for f, m in scratch_mtimes:
+            if f not in seen:
+                hist_files_mtime.append((f, m))
+                seen.add(f)
 
     return {
         "raw_sections":     list(zip(probes, outputs)),

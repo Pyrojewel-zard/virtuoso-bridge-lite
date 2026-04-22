@@ -764,6 +764,9 @@ def cli_snapshot() -> int:
             print(f"-o ROOT only supports maestro for now.", file=sys.stderr)
             return 1
         result = _maestro_snapshot(client, output_root=opts["output_root"])
+        hist = result.get("latest_history") or ""
+        if hist:
+            print(f"[snapshot] history: {hist}")
         print(result.get("output_dir", ""))
         return 0
 
