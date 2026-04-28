@@ -75,16 +75,27 @@ procedure(RBIpcErrHandler(ipcId data)
     ; separator argument -- on this IC6.1.8 install ``" \t\n"`` does
     ; NOT split on newline.  We build the separator with explicit
     ; char codes (TAB=9, LF=10) so behaviour is identical everywhere.
-    let((sep)
+    let((sep saw_banner prevPid)
         sep = strcat(" "
                      buildString(list(intToChar(9)))
                      buildString(list(intToChar(10))))
-        when(member("[RB-banner]" parseString(data sep))
+        prevPid = RBLastPid
+        saw_banner = member("[RB-banner]" parseString(data sep))
+        when(saw_banner
             foreach(tok parseString(data sep)
                 when(strlen(tok) > 4 && equal(substring(tok 1 4) "pid=")
                     RBLastPid = atoi(substring(tok 5)))
                 when(strlen(tok) > 5 && equal(substring(tok 1 5) "bind=")
-                    RBLastBind = substring(tok 6)))))
+                    RBLastBind = substring(tok 6)))
+            ; First banner of this daemon's lifetime --> announce
+            ; "ready" with the populated pid.  RBStart printed only
+            ; "launching" earlier; this is the authoritative startup
+            ; ack and avoids the pid=nil race window.
+            when(RBLastPid && !prevPid
+                printf("[RAMIC Bridge ipc=%L pid=%L] ready: bind=%s log=%s\n"
+                    ipcId RBLastPid RBLastBind
+                    if(RBDLog "/tmp/RB.log" "off"))))
+    )
 )
 
 procedure(RBIpcFinishHandler(ipcId data)
@@ -100,41 +111,59 @@ procedure(RBIpcFinishHandler(ipcId data)
 )
 
 procedure(RBStart()
-    ; Start the RAMIC Bridge daemon process
-    ; This launches the Python daemon as a child process of Virtuoso
-	if(boundp('RBIpc) && ipcIsAliveProcess(RBIpc) then
-		printf("[RAMIC Bridge ipc=%L pid=%L port=%d] already running\n"
-			RBIpc RBLastPid RBPort)
-	else
-		prog((host logpath)
-			; Determine host binding based on RBLocal setting
-			if(RBLocal then
-				host = "127.0.0.1"  ; Local-only connections
-			else
-				host = "0.0.0.0"   ; Accept connections from any IP
-			)
-			; Set log path if logging is enabled
-			if(RBDLog then
-				logpath = "/tmp/RB.log"
-			else
-				logpath = ""
-			)
-			; Start the Python daemon process with IPC handlers.
-			; Use "env -u" to strip Virtuoso's LD_LIBRARY_PATH / LD_PRELOAD
-			; so the system Python links against its own libs, not Virtuoso's
-			; bundled (and often incompatible) copies.
-			RBIpc = ipcBeginProcess(sprintf(nil "/usr/bin/env -u LD_LIBRARY_PATH -u LD_PRELOAD stdbuf -oL %s -u %L %L %L" RBPython RBDPath host RBPort) "" 'RBIpcDataHandler 'RBIpcErrHandler 'RBIpcFinishHandler logpath)
-			; Cache pid/bind so Refresh/Finish can still display them after
-			; the IPC handle is gone.  ipcGetPid returns the OS pid of the
-			; spawned child.
-			RBLastPid = errset(ipcGetPid(RBIpc)) && car(errset.errset)
-			RBLastBind = sprintf(nil "%s:%d" host RBPort)
-		)
-		printf("[RAMIC Bridge ipc=%L pid=%L] started: bind=%s log=%s at (%s)\n"
-			RBIpc RBLastPid RBLastBind
-			if(RBDLog "/tmp/RB.log" "off")
-			getCurrentTime())
-	)
+    ; Start the RAMIC Bridge daemon process.  Launches the Python daemon
+    ; as a child process of Virtuoso; the actual "ready" ack is printed
+    ; by RBIpcErrHandler when it sees the daemon's [RB-banner] line on
+    ; stderr (which is also where RBLastPid / RBLastBind get populated).
+    ; Doing it this way avoids the pid=nil race -- the startup printf
+    ; would otherwise run before the banner has been read off stderr.
+
+    ; Zombie scrub: if SKILL thinks the IPC handle is alive but no
+    ; banner has ever been parsed for it (RBLastPid is nil), the daemon
+    ; almost certainly died without releasing the IPC bookkeeping.
+    ; A real, healthy daemon populates RBLastPid via stderr banner
+    ; within ~hundreds of ms of ipcBeginProcess returning.  Reset SKILL
+    ; state so we don't loop forever printing "already running" against
+    ; a dead daemon.
+    when(boundp('RBIpc) && ipcIsAliveProcess(RBIpc) && !RBLastPid
+        printf("[RAMIC Bridge] zombie detected (ipc %L alive, no banner); resetting\n" RBIpc)
+        errset(ipcKillProcess(RBIpc))
+        RBIpc = 'unbound
+        RBLastBind = "")
+
+    if(boundp('RBIpc) && ipcIsAliveProcess(RBIpc) then
+        printf("[RAMIC Bridge ipc=%L pid=%L port=%d] already running\n"
+            RBIpc RBLastPid RBPort)
+    else
+        ; Clear leftover banner state so the new daemon's banner is
+        ; recognised as the first-of-its-lifetime by RBIpcErrHandler.
+        RBLastPid = nil
+        RBLastBind = ""
+        prog((host logpath)
+            ; Determine host binding based on RBLocal setting
+            if(RBLocal then
+                host = "127.0.0.1"  ; Local-only connections
+            else
+                host = "0.0.0.0"   ; Accept connections from any IP
+            )
+            ; Set log path if logging is enabled
+            if(RBDLog then
+                logpath = "/tmp/RB.log"
+            else
+                logpath = ""
+            )
+            ; Start the Python daemon process with IPC handlers.
+            ; Use "env -u" to strip Virtuoso's LD_LIBRARY_PATH / LD_PRELOAD
+            ; so the system Python links against its own libs, not Virtuoso's
+            ; bundled (and often incompatible) copies.
+            RBIpc = ipcBeginProcess(sprintf(nil "/usr/bin/env -u LD_LIBRARY_PATH -u LD_PRELOAD stdbuf -oL %s -u %L %L %L" RBPython RBDPath host RBPort) "" 'RBIpcDataHandler 'RBIpcErrHandler 'RBIpcFinishHandler logpath)
+        )
+        printf("[RAMIC Bridge ipc=%L] launching daemon (bind=%s:%d) at (%s)\n"
+            RBIpc
+            if(RBLocal "127.0.0.1" "0.0.0.0")
+            RBPort
+            getCurrentTime())
+    )
 )
 
 procedure(RBStop()
