@@ -402,11 +402,17 @@ hiCreateAppForm(
         ; --- ACTION ---
         list(RBMBtnStopAll   30:395 660:32)
     )
-    ?buttonLayout 'Empty
+    ; ``Apply`` shows just the Apply button at the bottom (no OK/Cancel/
+    ; Help noise).  Apply triggers RBMApply() which compares the form's
+    ; checkbox/port values against the live RBLocal/RBPort/RBDLog and
+    ; restarts the daemon if any of them changed.  Earlier 'Empty
+    ; layout looked cleaner but accidentally removed the only way to
+    ; commit option changes -- a regression dressed as polish.
+    ?buttonLayout 'Apply
     ?help ""
-    ?initialSize  720:455
-    ?minSize      720:455
-    ?maxSize      720:455
+    ?initialSize  720:500
+    ?minSize      720:500
+    ?maxSize      720:500
     ?mapCB        "RBMRefresh()"
     ?callback     "RBMApply()"
 )
