@@ -140,21 +140,6 @@ def _render_readme(
         "times, over-stating the real distinct-cloner population that",
         "GitHub itself reports as a 14-day rolling set._",
         "",
-        "> Provenance notes for the early window:",
-        "> - **2026-04-02 to 2026-04-12**: the saved Traffic-page screenshot",
-        "    labelled the 14-day window with **3360 clones** total",
-        "    (window total is exact); the *per-day* breakdown was eyeballed",
-        "    off the folded-line chart, so individual days are ±15% but the",
-        "    per-window sum matches within ~1%.",
-        "> - **2026-04-13** was inferred from the owner's recall that the",
-        "    rolling-unique reading exceeded 1100 that day; rough single-day",
-        "    estimate.",
-        "> - **Views for 2026-04-02 .. 04-13** had no screenshot at all, so",
-        "    they were extrapolated from the clones series using the",
-        "    views/clones ratio measured on the API-authoritative window",
-        "    (04-14..04-27): ~1.84×.  Treat as same-order-of-magnitude only.",
-        "> - **2026-04-14 onwards** is the authoritative API data.",
-        "",
         _table(last30_clones, "Last 30 days — Clones"),
         "",
         _table(last30_views, "Last 30 days — Views"),
@@ -217,7 +202,11 @@ def main() -> int:
             "label": label,
             "message": str(total),
             "color": color,
-            "cacheSeconds": 3600,
+            # 5-minute cache: short enough that schema/format edits to
+            # this script propagate to the user-visible badge within
+            # the next page load, long enough not to thrash shields.io
+            # for a metric that updates once a day from cron.
+            "cacheSeconds": 300,
         }
 
     clones_total = sum(v["count"] for v in clones.values())
