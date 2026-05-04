@@ -12,6 +12,15 @@ work on Linux, macOS, and Windows.  All paths passed in are *remote*
 Linux paths (the Virtuoso box's filesystem); the local OS only ferries
 strings through ``argparse`` and SSH.
 
+Four-step pipeline per design:
+
+| # | Script | Underneath | What it produces |
+|---|---|---|---|
+| 1 | ``import_gds.py`` | ``strmin`` | ``layout`` view |
+| 2 | ``import_verilog.py`` | ``ihdl`` | ``schematic`` + ``symbol`` |
+| 3 | ``add_power_labels.py`` | SKILL ``dbCreateLabel`` | VDD/VSS labels on M1.pin |
+| 4 | ``restyle_labels.py`` | SKILL ``dbSetq`` via ``~>attr`` | Shrink ``text/drawing`` to 0.05 µm; bump ``<layer>/pin`` to 0.2 µm + roman font |
+
 The one Windows catch is **Git Bash / Cygwin / MSYS2**: those
 environments mangle Linux-style absolute paths
 (``/home/zhangz/foo`` becomes ``C:/Program Files/Git/home/zhangz/foo``)
@@ -73,6 +82,38 @@ python add_power_labels.py --target-lib DIG_OUTPUT --cell my_block \
 
 User has to know nothing about which std-cell library the design uses —
 the script auto-discovers a reference cell from the instance list.
+
+## ``restyle_labels.py`` — make the imported layout legible
+
+Innovus signoff stamps **hundreds of `text/drawing` labels** (per-instance
+names like ``CTS_ccl_a_inv_00003``, ``shift_reg_reg<15>``, ``g487__5107``)
+all at the streamOut default height of **1 µm**.  On a 36×40 µm tiny digital
+block this is text taller than the layout itself — visually dominates and
+hides the actual cell shapes underneath.  Meanwhile the *real* electrical
+labels (``<layer>/pin`` markers for IO ports + the VDD/VSS labels we just
+added) are also at 1 µm and in ``stick`` font, hard to read at typical
+zoom.
+
+This script does both fixes in one SKILL pass:
+
+```
+python restyle_labels.py --target-lib DIG_OUTPUT --cell LFSR_32BIT
+# → text/drawing: 505 -> h=0.05 | <layer>/pin: 30 -> h=0.2 font=roman
+```
+
+| Class | Default behavior | CLI override |
+|---|---|---|
+| layer ``text`` purpose ``drawing`` | shrink to 0.05 µm | ``--text-height``, ``--text-layer`` |
+| any layer purpose ``pin`` | 0.2 µm + roman font | ``--pin-height``, ``--pin-font`` |
+
+If your PDK uses a different name for the documentation text layer
+(some PDKs call it ``annotate`` or ``ax``), pass ``--text-layer
+<name>``.  The pin-pass is layer-agnostic (filters only on
+``purpose == "pin"``) so it works across PDKs unchanged.
+
+**Implementation note**: uses ``s~>height = val`` assignment syntax
+(compiles to ``dbSetq``) rather than ``dbSet(s 'height val)`` —
+on this IC release the latter silently no-ops on label shapes.
 
 ## ``import_verilog.py`` — schematic + symbol via ``ihdl``
 
