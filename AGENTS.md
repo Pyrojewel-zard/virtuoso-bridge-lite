@@ -300,11 +300,10 @@ by `scripts/track_traffic.py`. **GitHub's traffic API only retains 14 days**
 — any window not polled inside that 14-day rolling buffer is **permanently
 lost**.
 
-This used to be auto-CI on a daily schedule, but `GITHUB_TOKEN` in Actions
-cannot access the `/traffic/clones` / `/traffic/views` endpoints (returns
-`403 Resource not accessible by integration` regardless of `permissions:`).
-The workflow at `.github/workflows/track-traffic.yml` is now `workflow_dispatch`
-only — schedule disabled. Run locally instead:
+There is no auto-update: GitHub Actions' default `GITHUB_TOKEN` cannot access
+the `/traffic/clones` / `/traffic/views` endpoints (returns `403 Resource not
+accessible by integration` regardless of `permissions:`), so the polling has
+to happen locally:
 
 ```bash
 GH_TOKEN=$(gh auth token) OWNER=Arcadia-1 REPO=virtuoso-bridge-lite \
