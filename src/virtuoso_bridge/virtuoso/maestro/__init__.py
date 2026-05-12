@@ -1,6 +1,6 @@
 """Maestro (ADE Assembler) session management, config reading, and writing."""
 
-from virtuoso_bridge.virtuoso.maestro.session import (
+from virtuoso_bridge.virtuoso.maestro.lifecycle import (
     open_session,
     close_session,
     find_open_session,
@@ -8,7 +8,13 @@ from virtuoso_bridge.virtuoso.maestro.session import (
     close_gui_session,
     _purge_maestro_cellviews as purge_maestro_cellviews,
 )
-from virtuoso_bridge.virtuoso.maestro.reader import read_config, read_env, read_results, export_waveform
+from virtuoso_bridge.virtuoso.maestro.reader import (
+    snapshot,
+    filter_sdb_xml,
+    filter_active_state_xml,
+    read_results,
+    export_waveform,
+)
 from virtuoso_bridge.virtuoso.maestro.writer import (
     # test
     create_test,
@@ -38,7 +44,6 @@ from virtuoso_bridge.virtuoso.maestro.writer import (
     set_job_policy,
     # simulation
     run_simulation,
-    wait_until_done,
     run_and_wait,
     # export
     create_netlist_for_corner,
@@ -61,9 +66,12 @@ __all__ = [
     "open_gui_session",
     "close_gui_session",
     "purge_maestro_cellviews",
-    # read
-    "read_config",
-    "read_env",
+    # read — aggregator (pass output_root to also write disk dump)
+    "snapshot",
+    # read — XML filters
+    "filter_sdb_xml",
+    "filter_active_state_xml",
+    # read — runtime ops
     "read_results",
     "export_waveform",
     # write - test
@@ -94,7 +102,6 @@ __all__ = [
     "set_job_policy",
     # write - simulation
     "run_simulation",
-    "wait_until_done",
     "run_and_wait",
     # write - export
     "create_netlist_for_corner",

@@ -2,7 +2,7 @@
 
 端到端流程指南：从原理图创建到 Maestro 仿真配置、运行、结果读取。
 
-**与 ade.md 的关系**：ade.md 是 mae* API 函数字典，本文档是「什么时候用什么」的流程决策指南。
+> **Why GUI mode?** Background sessions (`open_session` / `maeOpenSetup`) can read/write config but cannot run simulations reliably — the completion callback `run_and_wait` relies on never fires, and `close_session` cancels in-flight runs. GUI mode is required for simulation.
 
 ---
 
@@ -61,7 +61,12 @@ flowchart TB
 **必要步骤**：
 
 ```python
-from virtuoso_bridge import VirtuosoClient
+from virtuoso_bridge import VirtuosoClient, decode_skill_output
+from virtuoso_bridge.virtuoso.maestro import (
+    read_results, save_setup, run_and_wait,
+    open_gui_session, close_gui_session, purge_maestro_cellviews,
+)
+
 client = VirtuosoClient.from_env()
 
 lib, cell = "MYLIB", "TB_MYCELL"
@@ -167,7 +172,14 @@ f'?options list(list("start" "1") list("stop" "10G"))'
 
 ---
 
-### Stage 3: 输出与 Spec 定义
+| Pitfall | Symptom | Fix |
+|---------|---------|-----|
+| Not purging before open | ASSEMBLER-8127 from stale internal lock | `purge_maestro_cellviews(client)` before `open_gui_session` |
+| Using `open_session` for simulation | `run_and_wait` hangs / returns immediately | Use `open_gui_session` (GUI mode), not `open_session` (background) |
+| Skipping `save_setup` | Simulation uses stale parameters | Always save before running |
+| `maeCloseResults` leaves Maestro read-only | Next `maeRunSimulation` fails | Use `open_gui_session` to re-establish editable mode |
+| `maeCloseSession` on GUI-opened session | ASSEMBLER-8051: "opened from UI" | Use `close_gui_session` instead |
+| `window:N` in multi-line SKILL | `unbound variable - window` | Use `foreach(w hiGetWindowList() ...)` to find windows by `w~>windowNum` |
 
 **添加输出**：
 
@@ -188,16 +200,6 @@ client.execute_skill(
     f'?expr "ymax(VT(\\"/OUT\\"))" ?session "{ses}")')
 ```
 
-**添加 Spec**：
-
-```python
-# 带宽 > 1 GHz
-client.execute_skill(f'maeSetSpec("BW" "AC" ?gt "1G" ?session "{ses}")')
-
-# 最大输出 < 400 mV
-client.execute_skill(f'maeSetSpec("maxOut" "TRAN" ?lt "400m" ?session "{ses}")')
-```
-
 **决策点：VF() vs v() vs VT()**
 
 | 分析类型 | 正确函数 | 错误函数 |
@@ -206,16 +208,9 @@ client.execute_skill(f'maeSetSpec("maxOut" "TRAN" ?lt "400m" ?session "{ses}")')
 | TRAN | `VT("/net")` | `v("/net")` ❌ |
 | DC | `v("/net")` | — |
 
-**Spec 操作符**：
-- `?lt` — 小于
-- `?gt` — 大于
-- `?minimum` — 最小值
-- `?maximum` — 最大值
-- `?tolerence` — 允许误差
-
 ---
 
-### Stage 4: 扫参策略
+### Stage 3: 扫参策略
 
 **单参数 Parametric Sweep**：
 
@@ -246,7 +241,7 @@ client.execute_skill(f'maeDeleteCorner("tt_25" ?session "{ses}")')
 
 ---
 
-### Stage 5: 运行仿真
+### Stage 4: 运行仿真
 
 **正确方式（异步 + 等待）**：
 
@@ -278,7 +273,7 @@ if ".tmpADEDir" in results_dir:
 
 ---
 
-### Stage 6: 结果读取
+### Stage 5: 结果读取
 
 **方式 A: OCEAN API**：
 
@@ -418,7 +413,6 @@ client.execute_skill(
     f'maeAddOutput("Vout" "AC" ?outputType "net" ?signalName "/OUT" ?session "{ses}")')
 client.execute_skill(
     f'maeAddOutput("BW" "AC" ?outputType "point" ?expr "bandwidth(mag(VF(\\"/OUT\\")) 3 \\"low\\")" ?session "{ses}")')
-client.execute_skill(f'maeSetSpec("BW" "AC" ?gt "1G" ?session "{ses}")')
 
 # === Stage 3: Sweep ===
 client.execute_skill(f'maeSetVar("c_val" "1p,100f" ?session "{ses}")')
@@ -432,7 +426,8 @@ client.execute_skill("maeWaitUntilDone('All)", timeout=300)
 client.execute_skill('maeOpenResults()')
 for pid in range(1, 3):  # 2 sweep points
     r_bw = client.execute_skill(f'maeGetOutputValue("BW" "AC" ?pointId {pid})')
-    r_spec = client.execute_skill(f'maeGetSpecStatus("BW" "AC" ?pointId {pid})')
-    print(f"point {pid}: BW = {r_bw.output}, spec = {r_spec.output}")
+    print(f"point {pid}: BW = {r_bw.output}")
 client.execute_skill('maeCloseResults()')
 ```
+
+Add dialog recovery (`client.dismiss_dialog()`) in the loop if GUI dialogs may appear.

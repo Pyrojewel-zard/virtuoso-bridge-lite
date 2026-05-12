@@ -10,15 +10,23 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from _timing import decode_skill, format_elapsed, timed_call
 from virtuoso_bridge import VirtuosoClient
+from virtuoso_bridge.virtuoso.layout.ops import layout_clear_routing
 
 
 def main() -> int:
     client = VirtuosoClient.from_env()
 
+    elapsed, design = timed_call(client.get_current_design)
+    print(f"[get_current_design] [{format_elapsed(elapsed)}]")
+    lib, cell, view = design
+    if not lib or not cell or view != "layout":
+        print("Open a layout cellview in Virtuoso first.")
+        return 1
+
     elapsed, result = timed_call(
-        lambda: client.layout.clear_routing(timeout=30)
+        lambda: client.execute_skill(layout_clear_routing(), timeout=30)
     )
-    print(f"[layout.clear_routing] [{format_elapsed(elapsed)}]")
+    print(f"[layout_clear_routing] [{format_elapsed(elapsed)}]")
     print(decode_skill(result.output or ""))
     return 0
 

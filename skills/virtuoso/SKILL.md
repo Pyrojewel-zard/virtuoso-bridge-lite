@@ -67,10 +67,13 @@ All `virtuoso-bridge` CLI commands and Python scripts must run inside the activa
 
 ### Connection sequence (follow in order)
 
-1. **Check `.env`** — if the project has no `.env` yet, run **`virtuoso-bridge init`** to create one. If `.env` already exists, skip `init`.
+1. **Check `.env`** — the bridge looks up `.env` in this order: `--env FILE` (CLI flag) → `./.env` (project-local) → `~/.virtuoso-bridge/.env` (user-level). If **any** of these exists, skip `init`. Only run **`virtuoso-bridge init`** when none exist — it creates `~/.virtuoso-bridge/.env` (user-level, shared across projects). If the user already told you their SSH target, prefer `virtuoso-bridge init user@host [-J user@jump]` to fill host/user/jump + port in one step; otherwise plain `virtuoso-bridge init` writes an empty template for them to edit.
 2. **`virtuoso-bridge start`** — starts the local bridge service and SSH tunnel.
 3. **If status is `degraded`** — the user must load the setup script in Virtuoso CIW (the `start` output tells them exactly what to run).
 4. **`virtuoso-bridge status`** — verify everything is `healthy` before proceeding.
+5. **`virtuoso-bridge windows`** — list all open Virtuoso windows (num + name).
+6. **`virtuoso-bridge screenshot [ciw|current|N]`** — screenshot a window to `output/`. Default: CIW.
+7. **`virtuoso-bridge snapshot -o <dir>`** — dump the currently-focused maestro window to `<dir>/<YYYYMMDD_HHMMSS>__<lib>__<cell>/` (state XMLs, SKILL probe output, per-point netlist + PSF results, `.rdb`). This is the default way to capture Maestro state — no Python required. Use the Python API (below) only inside a multi-step pipeline.
 
 ### Then
 
@@ -84,12 +87,63 @@ from virtuoso_bridge import VirtuosoClient
 client = VirtuosoClient.from_env()
 
 client.execute_skill('...')                     # run SKILL expression
+client.fetch(expr, fields)                       # batch ~>slot extract (see below)
+client.fetch_one(expr, fields)                   # single-object ~>slot extract
 client.load_il("my_script.il")                  # upload + load .il file
 client.upload_file(local_path, remote_path)      # local → remote
 client.download_file(remote_path, local_path)    # remote → local
 client.open_window(lib, cell, view="layout")     # open GUI window
 client.run_shell_command("ls /tmp/")             # run shell on remote
+client.list_windows()                            # list all open windows
+client.screenshot(output="output", target="ciw") # screenshot a window
 ```
+
+### Batch attribute fetch: `fetch()` / `fetch_one()`
+
+`execute_skill()` is a raw-string in, raw-string out channel. For DFII
+objects it returns an opaque handle (`"db:0x2800ccbe"`) that's useless
+by itself — to get attributes you'd have to send another SKILL call
+per attribute, which is both verbose and slow (~100 ms per
+round-trip).
+
+**`fetch(expr, fields)`** does the right thing in one round-trip:
+sends `mapcar(lambda((o) list(o~>f1 o~>f2 ...)) <expr>)`, parses the
+SKILL s-expression response, and returns a list of Python dicts.
+
+```python
+# List of selected schematic objects in one call
+objs = client.fetch("geGetSelSet()", ["objType", "cellName", "name"])
+# [{"objType": "inst", "cellName": "nch_mac", "name": "M1"},
+#  {"objType": "inst", "cellName": "pch_mac", "name": "M2"}, ...]
+print(objs[0]["name"])     # → 'M1'
+
+# All instances in the current schematic — 1 call, not N×fields
+insts = client.fetch(
+    "geGetEditCellView()~>instances",
+    ["name", "cellName", "libName", "viewName"],
+)
+```
+
+`fetch_one(expr, fields)` is the single-object variant — wraps in
+`list(...)` and returns one dict:
+
+```python
+cv = client.fetch_one("geGetEditCellView()",
+                      ["libName", "cellName", "viewName"])
+# {"libName": "PLAYGROUND", "cellName": "AMP", "viewName": "schematic"}
+```
+
+**Value decoding** (both methods): strings unquoted, ``nil`` →
+``None``, ``t`` → ``True``, nested SKILL lists → nested Python lists,
+bare atoms (numbers / symbols) returned as strings so the caller can
+coerce (`int(d["fingers"])`).
+
+**Why not a `client["fn"]()` lazy-proxy style (à la `skillbridge`)?**
+Lazy proxies look nicer syntactically but trigger one round-trip per
+attribute access — 100 selected objects × 3 fields = 300 ssh hops
+(~30 s). `fetch` does it all in one hop (~200 ms). If you need the
+REPL-style ergonomics, use `skillbridge` alongside this bridge —
+they coexist fine on the same Virtuoso session.
 
 ### CIW output vs return value
 
@@ -146,11 +200,11 @@ Load on demand — each contains detailed API docs and edge-case guidance:
 | `references/layout-skill-api.md` | Layout SKILL API, read/query, mosaic, layer control |
 | `references/layout-python-api.md` | LayoutEditor, LayoutOps, shape/via/instance creation |
 | `references/maestro-skill-api.md` | mae* SKILL functions, OCEAN, corners, known blockers |
-| `references/maestro-python-api.md` | Session, read_config (verbose 0/1/2), writer functions |
+| `references/maestro-python-api.md` | snapshot() (raw SKILL sections) + filter_*_xml + writer functions; read_results (per-point × per-output CSV) + export_waveform (OCEAN) |
 | `references/simulation-flow.md` | **Standard simulation flow** — 8-step guide, pitfalls, optimization loops |
 | `references/netlist.md` | CDL/Spectre netlist formats, spiceIn import |
 | `references/troubleshooting.md` | Known gotchas, GUI blocking, CDF quirks, connection issues |
-| `references/testbench-migration.md` | Migrate testbench + Maestro to another library (pitfalls, CDF param names) |
+| `references/cellview-on-disk-layout.md` | What's inside each view on disk (`sch.oa`, `data.dm` binary format, `maestro.sdb`/`active.state` XML skeleton, lock files, SOS markers); which files are text-editable vs must go through DFII API |
 | `references/schematic-recreation.md` | Recreate schematic from existing design (grid layout, diff pair conventions) |
 | `references/batch-netlist-si.md` | Generate netlists without Maestro using si batch translator |
 
@@ -187,14 +241,28 @@ Load on demand — each contains detailed API docs and edge-case guidance:
 - `07–10` — delete/clear operations
 
 ### `examples/01_virtuoso/maestro/`
-- `01_read_open_maestro.py` — read config from the currently open maestro
-- `02_gui_open_read_close_maestro.py` — GUI open → read config → close
-- `03_bg_open_read_close_maestro.py` — background open → read config → close
-- `04_read_env.py` — read environment settings (model files, sim options, run mode)
-- `05_read_results.py` — read simulation results (output values, specs, yield)
-- `06a_rc_create.py` — create RC schematic + Maestro setup
-- `06b_rc_simulate.py` — run simulation
-- `06c_rc_read_results.py` — read results, export waveforms, open GUI
+- `01_read_focused_maestro.py` — in-memory snapshot of the focused maestro (config + env + results + outputs + corners + variables)
+- `02_snapshot_with_metrics.py` — snapshot the focused maestro to a timestamped directory (disk artifacts)
+- `03_bg_open_read_close_maestro.py` — background open → read config → close (no GUI window)
+- `04_gui_open_snapshot_close.py` — GUI open → snapshot artifacts → close (owns lifecycle)
+- `05_gui_session_lifecycle.py` — GUI session lifecycle integration test (open/close edge cases)
+- `06a_rc_create.py` — create RC schematic + Maestro setup (cell name auto-timestamped)
+- `06b_rc_simulate_and_read.py` — run simulation in background, read results, export waveforms
+- `07_ensure_maestro_view.py` — bootstrap a missing maestro cellview (`maeOpenSetup` + `maeSaveSetup`) before `open_gui_session`
+- `08_set_simulator_mode.py` — switch between APS / Spectre X (LX/MX/AX/VX/CX) / Spectre FX via `asiSetHighPerformanceOptionVal`
+- `09_export_sweep_subpoints.py` — pull per-sweep-point waveforms via OCEAN `openResults(<abs path>)` (works around `maeOpenResults` rejecting `Interactive.N/M`)
+
+### `examples/01_virtuoso/veriloga/`
+- `import_veriloga.py` — turn a local `.va` file into a Cadence Verilog-A cellview via the 5-step IC618 path: placeholder schematic → symbol → veriloga skeleton → upload .va → reparse.  This example covers the **file/cellview interface only** — the `.va` contents are out of scope; `sample.va` is a trivial placeholder.
+
+### `examples/01_virtuoso/diagnostics/`
+- `sniff_cdslck.py` — walk a library tree and report `.cdslck` lock-file owners.  Authoritative when SKILL-side session enumeration disagrees with on-disk reality.
+
+### `examples/01_virtuoso/digital_import/`
+Hand off Genus/Innovus P&R products into a Virtuoso library.  All three scripts wrap standalone Cadence batch tools (`strmin` / `ihdl`) via SKILL `system()` — no GUI forms, no manual bootstrap.  See that folder's `README.md` for prerequisites, PDK-portability notes, and full CLI reference.
+- `import_gds.py` — routed layout via `strmin`
+- `import_verilog.py` — schematic + symbol via `ihdl` batch (the official CLI entry point for Verilog Import)
+- `add_power_labels.py` — drop VDD/VSS labels on a routed layout by reflectively reading std-cell pin geometry (no `--ref-cell` needed, auto-discovers)
 
 ## Common workflows
 
@@ -312,16 +380,35 @@ data_with_pos = read_schematic(client, LIB, CELL, include_positions=True)
 # No CDF param filtering (return all 200+ PDK params):
 raw = read_schematic(client, LIB, CELL, include_positions=False, param_filters=None)
 
-# 2. Maestro — use open_session / read_config / close_session
-from virtuoso_bridge.virtuoso.maestro import open_session, close_session, read_config
-session = open_session(client, LIB, CELL)       # maeOpenSetup (background, no GUI)
-config = read_config(client, session)            # dict of key -> (skill_expr, raw)
-# config keys: maeGetSetup (tests), maeGetEnabledAnalysis, maeGetAnalysis:XXX,
-#              maeGetTestOutputs, variables, parameters, corners
-close_session(client, session)
+# 2. Maestro — snapshot the focused window
+#
+# PREFER THE CLI for one-shot captures.  The CLI handles venv + client
+# construction, and on-disk output is everything you need for
+# analysis (state XMLs, SKILL probe text, per-point psf/* results,
+# .rdb, netlist/).  Python for this case is pure boilerplate.
+#
+#   $ virtuoso-bridge snapshot -o output/
+#
+# Use the Python API only when snapshot is one step in a larger
+# same-connection pipeline (e.g. open_session → snapshot →
+# run_simulation → close_session, or a loop over many cells):
 
-# IMPORTANT: Do NOT use deOpenCellView for maestro — it opens read-only and
-# returns incomplete data. Always use open_session (= maeOpenSetup).
+from virtuoso_bridge.virtuoso.maestro import snapshot
+d = snapshot(client)                             # SKILL-only, ~150ms, 1 round-trip
+# d["raw_sections"] = [(probe_skill_text, raw_output), ...]
+#   Each label IS the actual SKILL string we ran (e.g.
+#   'maeGetAnalysis("test" "ac" ?session "fnxSession18")');
+#   value is the verbatim SKILL alist — no Python parsing.
+# d also has session / lib / cell / view / mode / unsaved.
+
+# Full disk dump (raw + YAML-filtered XMLs + 16 SKILL probes + per-point
+# inputs + spectre results + .rdb):
+d = snapshot(client, output_root="output/")      # → d["output_dir"]
+
+# IMPORTANT: snapshot() always uses the CURRENTLY FOCUSED maestro window.
+# Click the desired ADE Assembler first, or use open_session() to bring it up.
+
+# Rule of thumb: one-shot inspection → CLI; multi-step pipeline → Python.
 
 # 3. Netlist — generate from maestro session, download via SSH
 session = open_session(client, LIB, CELL)
@@ -361,6 +448,8 @@ if not r.output or r.output.strip() in ("", "nil"):
     # If still stuck, user must manually dismiss the dialog in Virtuoso
 
 # 6. Read results
+# For per-point x per-output results across sweeps/corners -> use read_results
+# (see references/simulation-flow.md). For ad-hoc single-output reads:
 client.execute_skill(f'maeOpenResults(?history "{history}")', timeout=15)
 r = client.execute_skill(f'maeGetOutputValue("myOutput" "myTest")', timeout=30)
 value = float(r.output) if r.output else None
@@ -389,7 +478,7 @@ Apply these rules whenever you read or export **any** maestro output (scalar or 
 
 **Debug with screenshots:** if simulation appears stuck or results are unexpected, capture the Maestro window to see its current state:
 
-```python
+```
 client.execute_skill('''
 hiWindowSaveImage(
     ?target hiGetCurrentWindow()
@@ -402,6 +491,96 @@ client.download_file("/tmp/debug_maestro.png", "output/debug_maestro.png")
 ```
 
 This reveals dialog boxes, error messages, or unexpected variable values that are invisible through the SKILL channel alone.
+
+### Root Cause: Why maeGetOutputValue returns nil for computed expressions
+
+**Symptom:** `maeGetOutputValue("bandwidth(...)" testName)` returns nil, but `maeGetOutputValue("Noise_rms_out" testName)` returns a value.
+
+**Root Cause:** The PSF directory contains no actual waveform data files. Check with:
+
+```bash
+# SSH to remote and check PSF directory
+ssh zhangz@zhangz-wei "ls /server_local_ssd/.../Interactive.N/psf/<test>/psf/"
+# Expected: .raw, simdata, spectre.log files
+# Actual: only spectre.out, variables_file (NO waveform data!)
+```
+
+**Why this happens:**
+- Maestro saves only **pre-computed scalar outputs** (like `Noise_rms_out`) to the RDB
+- Raw waveforms (VOUT, VSIN signals) are NOT saved to PSF unless "save=all" is enabled
+- Computed expressions (bandwidth, dB20, value) need the waveform data to calculate — returns nil
+
+**Check the RDB directly:**
+
+```bash
+ssh zhangz@zhangz-wei "sqlite3 .../Interactive.N.rdb 'SELECT * FROM resultValue'"
+# Returns rows like:
+# 1|7|0.000469         -> Noise_rms_out scalar (saved)
+# 1|8|wave             -> VF(/VOUT)/VF(/VSIN) is a waveform reference, not saved!
+```
+
+**Solution:** Enable "save all" option before running simulation:
+
+```python
+client.execute_skill(f'maeSetEnvOption("{test}" ?option "save" ?value "all")')
+client.execute_skill('maeSaveSetup()')
+```
+
+### Reliable Result Reading: Parse the Log File
+
+When Maestro OCEAN functions fail (due to missing PSF waveform data), parse the `.log` file:
+
+```python
+def read_maestro_results_from_log(client, LIB, CELL, history):
+    """Read simulation results from the log file - most reliable method."""
+
+    # Resolve the OA library path via SKILL — works on any setup,
+    # no hardcoded ``/home/USER/...`` assumption.
+    r = client.execute_skill(f'ddGetObj("{LIB}")~>readPath')
+    lib_path = (r.output or "").strip().strip('"')
+    log_path = f"{lib_path}/{CELL}/maestro/results/maestro/{history}.log"
+    client.download_file(log_path, "/tmp/sim.log")
+    
+    # Parse tab-separated format: "expression\t\tvalue"
+    results = {}
+    with open("/tmp/sim.log") as f:
+        for line in f:
+            if "\t\t" in line:
+                parts = line.rstrip().split("\t\t")
+                if len(parts) >= 2:
+                    name = parts[0].strip()
+                    value = parts[1].strip()
+                    # Skip header lines
+                    if name and value and "corner" not in name.lower():
+                        results[name] = value
+    return results
+
+# Full workflow:
+from virtuoso_bridge import VirtuosoClient
+from virtuoso_bridge.virtuoso.maestro import open_gui_session, run_and_wait, close_gui_session
+
+client = VirtuosoClient.from_env()
+LIB, CELL = "PLAYGROUND_AMP", "TB_AMP_5T_D2S_DC_AC"
+
+session = open_gui_session(client, LIB, CELL)  # GUI mode required for results
+history, _ = run_and_wait(client, session=session, timeout=300)
+h = history.strip('"')
+
+results = read_maestro_results_from_log(client, LIB, CELL, h)
+print(results)
+# {'bandwidth(...)': '1.64M', 'dB20(...)': '10.93', ...}
+
+close_gui_session(client, session, save=False)
+```
+
+**Log format in the file:**
+
+```
+bandwidth(abs((VF("/VOUT") / VF("/VSIN"))) 3 "low")		1.64M
+dB20(value(abs((VF("/VOUT") / VF("/VSIN"))) 10000))		10.93
+value(abs((VF("/VOUT") / VF("/VSIN"))) 10000)		3.519
+Noise_rms_out						469u
+```
 
 ### SKILL channel timeout — diagnosis and recovery
 

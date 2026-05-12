@@ -4,7 +4,6 @@
 import sys
 import socket
 import os
-import fcntl
 import json
 import signal
 import threading
@@ -12,9 +11,52 @@ import time
 import errno
 import traceback
 
-# Python 2.7 compatibility: try to import psutil, fallback to manual PID detection
+# Counters surfaced to the SKILL monitor via stderr [RB-stat] lines.
+# Throttled to ~1 Hz so heavy traffic doesn't flood stderr.
+_RB_START_T = time.time()
+_RB_CALLS = 0
+_RB_ERRORS = 0
+_RB_LAST_STAT_T = 0.0
+
+
+def _emit_stat(force=False):
+    global _RB_LAST_STAT_T
+    now = time.time()
+    if not force and now - _RB_LAST_STAT_T < 1.0:
+        return
+    _RB_LAST_STAT_T = now
+    try:
+        sys.stderr.write(
+            "[RB-stat] count={0} errors={1} uptime={2}\n".format(
+                _RB_CALLS, _RB_ERRORS, int(now - _RB_START_T)
+            )
+        )
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
 try:
-    import psutil
+    import fcntl as _fcntl
+except ImportError:
+    _fcntl = None
+
+_fcntl_fn = getattr(_fcntl, "fcntl", None)
+_f_getfl = getattr(_fcntl, "F_GETFL", 3)
+_f_setfl = getattr(_fcntl, "F_SETFL", 4)
+_o_nonblock = int(getattr(os, "O_NONBLOCK", 0))
+
+
+def _fcntl_or_die(*args):
+    if _fcntl_fn is None:
+        raise RuntimeError("fcntl is unavailable on this platform")
+    return _fcntl_fn(*args)
+
+# Python 2.7 compatibility: try to import psutil, fallback to manual PID detection
+psutil = None
+try:
+    import psutil as _psutil
+    psutil = _psutil
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
@@ -27,13 +69,14 @@ PORT = int(sys.argv[2])
 timeout_flag = False
 
 # Get Virtuoso's PID - this is the process we need to send signals to
-if PSUTIL_AVAILABLE:
+if PSUTIL_AVAILABLE and psutil is not None:
     # Use psutil if available
     current_process = psutil.Process()
     parent_process = current_process.parent()
+    grandparent_process = parent_process.parent() if parent_process else None
     # Python 2.7 compatibility: handle None case
-    if parent_process and parent_process.parent():
-        virtuoso_pid = parent_process.parent().pid
+    if grandparent_process:
+        virtuoso_pid = grandparent_process.pid
     else:
         virtuoso_pid = os.getppid()
 else:
@@ -64,13 +107,13 @@ else:
 # Set stdin to non-blocking mode for reading Virtuoso responses
 # Note: Only stdin needs to be non-blocking, stdout should remain blocking
 stdin_fd = sys.stdin.fileno()
-stdin_fl = fcntl.fcntl(stdin_fd, fcntl.F_GETFL)
-fcntl.fcntl(stdin_fd, fcntl.F_SETFL, stdin_fl | os.O_NONBLOCK)
+stdin_fl = _fcntl_or_die(stdin_fd, _f_getfl)
+_fcntl_or_die(stdin_fd, _f_setfl, stdin_fl | _o_nonblock)
 
 # Keep stdout blocking for reliable writes
 stdout_fd = sys.stdout.fileno()
-stdout_fl = fcntl.fcntl(stdout_fd, fcntl.F_GETFL)
-fcntl.fcntl(stdout_fd, fcntl.F_SETFL, stdout_fl & ~os.O_NONBLOCK)  # Ensure blocking
+stdout_fl = _fcntl_or_die(stdout_fd, _f_getfl)
+_fcntl_or_die(stdout_fd, _f_setfl, stdout_fl & ~_o_nonblock)  # Ensure blocking
 
 # Global watchdog timer reference
 watchdog_timer = None
@@ -243,6 +286,20 @@ def handle_external_connection(conn, addr):
         else:
             _safe_sendall(conn, returnData)
 
+        # Stats: count this call and tag as error if SKILL sent NAK
+        # (0x15) or the response is empty/malformed.  Throttled emit
+        # below pushes the totals to SKILL via stderr.
+        global _RB_CALLS, _RB_ERRORS
+        _RB_CALLS += 1
+        _first = returnData[:1] if returnData else b""
+        if isinstance(_first, str):
+            _is_ok = (_first == "\x02")
+        else:
+            _is_ok = (_first == b"\x02")
+        if not _is_ok:
+            _RB_ERRORS += 1
+        _emit_stat()
+
         # Clean up temp file if we used one
         if tmp_il_path:
             try:
@@ -291,6 +348,33 @@ def start_server():
                 raise
 
         s.listen(1)
+        # Banner -- SKILL side parses this from stderr to populate
+        # RBLastPid / RBLastBind / RBLastHost / RBLastIP for the monitor
+        # display.  Format is frozen:
+        #   "[RB-banner] pid=N bind=H:P host=NAME ip=A.B.C.D"
+        try:
+            _hn = socket.gethostname() or "unknown"
+        except Exception:
+            _hn = "unknown"
+        _ip = ""
+        try:
+            _probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                _probe.connect(("8.8.8.8", 80))
+                _ip = _probe.getsockname()[0]
+            finally:
+                _probe.close()
+        except Exception:
+            try:
+                _ip = socket.gethostbyname(socket.gethostname())
+            except Exception:
+                _ip = ""
+        sys.stderr.write(
+            "[RB-banner] pid={0} bind={1}:{2} host={3} ip={4}\n".format(
+                os.getpid(), HOST, PORT, _hn, (_ip or "unknown"),
+            )
+        )
+        sys.stderr.flush()
         while True:
             conn, addr = s.accept()
             try:

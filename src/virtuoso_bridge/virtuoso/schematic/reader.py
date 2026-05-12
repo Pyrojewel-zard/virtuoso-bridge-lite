@@ -66,6 +66,13 @@ let((cv result)
       result = strcat(result sprintf(nil "INST|%s|%s|%s" inst~>name inst~>libName inst~>cellName))
       {geometry_inst}
       result = strcat(result "\n")
+      ; nlAction (set by shift+delete "ignore" in the schematic editor)
+      let((nla)
+        nla = nil
+        foreach(p inst~>prop
+          when(p~>name == "nlAction" nla = p~>value))
+        when(nla
+          result = strcat(result sprintf(nil "NLACTION|%s\n" nla))))
       ; terminals
       foreach(it inst~>instTerms
         when(it~>net
@@ -143,6 +150,10 @@ def read_schematic(
 
     Returns:
         dict with keys: instances, nets, pins, notes.
+
+        Each instance dict carries ``nlAction`` only when set — typically
+        ``"ignore"`` when the designer shift+deleted the instance in the
+        schematic editor to exclude it from netlisting.  Absent key = normal.
     """
     if lib and cell:
         cv_expr = f'dbOpenCellViewByType("{lib}" "{cell}" "schematic" "schematic" "r")'
@@ -226,6 +237,11 @@ def _parse_schematic(
                     allowed_params = _match_filter(filter_config, inst_lib, inst_cell)
                 else:
                     allowed_params = None
+
+            elif line.startswith("NLACTION|") and current_inst is not None:
+                parts = line.split("|", 1)
+                if len(parts) > 1:
+                    current_inst["nlAction"] = parts[1]
 
             elif line.startswith("TERM|") and current_inst is not None:
                 parts = line.split("|")

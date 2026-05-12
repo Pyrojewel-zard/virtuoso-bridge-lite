@@ -4,7 +4,12 @@ All functions take a session string and call mae* SKILL functions.
 They return the raw SKILL output string.
 """
 
+import logging
+
 from virtuoso_bridge import VirtuosoClient
+
+
+logger = logging.getLogger(__name__)
 
 
 def _q(client: VirtuosoClient, expr: str, timeout: int | None = None) -> str:
@@ -227,10 +232,18 @@ def setup_corner(client: VirtuosoClient, name: str, *,
                  model_file: str = "", model_section: str = "",
                  variables: dict[str, str] | None = None,
                  session: str = "") -> str:
-    """Create a fully configured corner with model file and variables.
+    """Convenience wrapper: create a corner + set its vars + attach a model file.
 
-    Uses maeSetCorner + maeSetVar (for corner variables) + axl* setup-DB API
-    (for model file/section). No XML editing required.
+    Internally does three things any caller can also do manually:
+
+      1. :func:`set_corner` — create the corner (``maeSetCorner``).
+      2. For each entry in ``variables``: ``maeSetVar(?typeName "corner" ?typeValue …)``.
+      3. ``axlGetCorner`` → ``axlPutModel`` → ``axlSetModelFile`` /
+         ``axlSetModelSection`` — attach the model.
+
+    Intentionally heavier than its peers — use it when you want a fully
+    configured corner in one call.  For "just create an empty corner",
+    call :func:`set_corner` directly.
 
     Args:
         name: Corner name, e.g. "tt_25"
@@ -333,34 +346,126 @@ def run_simulation(client: VirtuosoClient, *, session: str = "",
     return _q(client, parts)
 
 
-def wait_until_done(client: VirtuosoClient, timeout: int = 600,
-                    _marker: str = "") -> str:
-    """Wait for a simulation that was started with run_and_wait().
+def _remove_marker(runner, marker: str) -> None:
+    """Delete the marker file in either local or remote mode."""
+    if runner is None:
+        from pathlib import Path as _Path
+        try:
+            _Path(marker).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+    else:
+        runner.run_command(f"rm -f {marker}", timeout=10)
 
-    Polls a marker file via SSH without blocking the SKILL channel.
-    Prefer run_and_wait() which handles everything automatically.
 
-    Args:
-        _marker: internal marker path (set by run_and_wait)
+def _wait_until_done(client: VirtuosoClient, marker: str,
+                      timeout: int = 600) -> str:
+    """Internal: poll the marker file written by run_and_wait's SKILL callback.
+
+    Cadence-side ``maeRunSimulation(?callback ...)`` registers a SKILL
+    callback that ``echo``s ``done`` to ``marker`` when the run finishes.
+    Local mode reads the file directly via stdlib; remote mode ``ssh
+    cat``s it every 2 s on the SSH channel, keeping the SKILL channel
+    free for other work (dialog dismissal, screenshots, ...).
+
+    Not public — call :func:`run_and_wait` instead, which sets up the
+    callback + marker and calls this helper.
     """
     import time as _time
-
-    if not _marker:
-        raise ValueError("No marker path. Use run_and_wait() instead.")
+    from pathlib import Path as _Path
 
     runner = client.ssh_runner
-    if runner is None:
-        raise RuntimeError("No SSH connection (tunnel not started?)")
 
     deadline = _time.monotonic() + timeout
     while _time.monotonic() < deadline:
-        r = runner.run_command(f"cat {_marker} 2>/dev/null", timeout=10)
-        if r.returncode == 0 and r.stdout.strip():
-            runner.run_command(f"rm -f {_marker}", timeout=10)
-            return r.stdout.strip()
+        if runner is None:
+            mp = _Path(marker)
+            if mp.exists():
+                content = mp.read_text().strip()
+                if content:
+                    _remove_marker(runner, marker)
+                    return content
+        else:
+            r = runner.run_command(f"cat {marker} 2>/dev/null", timeout=10)
+            if r.returncode == 0 and r.stdout.strip():
+                _remove_marker(runner, marker)
+                return r.stdout.strip()
         _time.sleep(2)
 
     raise TimeoutError(f"Simulation did not finish within {timeout}s")
+
+
+def _strip_skill_atom(raw: str) -> str:
+    return (raw or "").strip().strip('"')
+
+
+def _diagnose_run_not_started(client: VirtuosoClient, session: str) -> dict[str, str]:
+    """Collect quick diagnostics when maeRunSimulation returns nil."""
+    info: dict[str, str] = {
+        "session": session or "",
+        "test": "",
+        "enabled_analyses": "",
+        "is_explorer_window": "unknown",
+        "current_form": "",
+    }
+
+    try:
+        test = _strip_skill_atom(_q(client, f'car(maeGetSetup(?session "{session}"))'))
+        if test and test != "nil":
+            info["test"] = test
+    except Exception:  # noqa: BLE001
+        pass
+
+    if info["test"]:
+        try:
+            # Best-effort probe: some older Virtuoso/Maestro environments may not
+            # expose maeGetEnabledAnalysis, so keep diagnostics partial on failure.
+            enabled = _q(
+                client,
+                f'maeGetEnabledAnalysis("{info["test"]}" ?session "{session}")',
+            )
+            info["enabled_analyses"] = (enabled or "").strip()
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        is_explorer = _q(
+            client,
+            'let((s) s = car(errset(sevSession(hiGetCurrentWindow()))) if(s then "t" else "nil"))',
+        )
+        info["is_explorer_window"] = _strip_skill_atom(is_explorer)
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        form = _q(client, 'let((f) f = hiGetCurrentForm() when(f f~>name))')
+        info["current_form"] = _strip_skill_atom(form)
+    except Exception:  # noqa: BLE001
+        pass
+
+    return info
+
+
+def _try_recover_blocking_form(client: VirtuosoClient, info: dict[str, str]) -> bool:
+    """Best-effort unblock if a modal form is active. Returns True if attempted."""
+    form_name = info.get("current_form", "")
+    if not form_name or form_name == "nil":
+        return False
+
+    try:
+        # First try SKILL-side dismissal for current modal form.
+        _q(client, 'let((f) f = hiGetCurrentForm() when(f hiFormDone(f)) t)')
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        # If SKILL channel is partially blocked, use X11 fallback.
+        client.dismiss_dialog()
+    except Exception:  # noqa: BLE001
+        pass
+    return True
 
 
 def run_and_wait(client: VirtuosoClient, *, session: str = "",
@@ -378,13 +483,13 @@ def run_and_wait(client: VirtuosoClient, *, session: str = "",
     """
     import uuid
 
+    # runner is None in local mode (Virtuoso on the same host); _remove_marker
+    # and _wait_until_done both handle that case via local fs operations.
     runner = client.ssh_runner
-    if runner is None:
-        raise RuntimeError("No SSH connection (tunnel not started?)")
 
     nonce = uuid.uuid4().hex[:8]
     marker = f"/tmp/vb_sim_done_{nonce}"
-    runner.run_command(f"rm -f {marker}", timeout=10)
+    _remove_marker(runner, marker)
 
     # Define callback that writes marker file when simulation finishes.
     # Use system("echo ... > file") instead of outfile/fprintf to avoid
@@ -395,12 +500,46 @@ procedure(_vb_sim_done_{nonce}(session runID)
   printf("[%s sim done] run %L\\n" nth(2 parseString(getCurrentTime())) runID))
 ''')
 
-    # Start simulation with callback — atomic, no race condition
+    # Start simulation with callback — atomic, no race condition.
+    # If Virtuoso returns nil here, no run was started and the callback
+    # can never fire, so fail fast instead of entering endless marker polling.
     history = run_simulation(client, session=session,
                              callback=f"_vb_sim_done_{nonce}")
+    history_name = _strip_skill_atom(history)
+    if not history_name or history_name == "nil":
+        info = _diagnose_run_not_started(client, session)
+        recovered = _try_recover_blocking_form(client, info)
+
+        # One retry after recovery if we had an active modal form.
+        if recovered:
+            history = run_simulation(client, session=session,
+                                     callback=f"_vb_sim_done_{nonce}")
+            history_name = _strip_skill_atom(history)
+
+        if not history_name or history_name == "nil":
+            _remove_marker(runner, marker)
+            test = info.get("test", "") or "<unknown>"
+            analyses = info.get("enabled_analyses", "") or "<unknown>"
+            explorer = info.get("is_explorer_window", "unknown")
+            form = info.get("current_form", "") or "<none>"
+            extra = (
+                f"session={session}, test={test}, enabled_analyses={analyses}, "
+                f"explorer_window={explorer}, current_form={form}."
+            )
+            logger.warning(
+                "Simulation did not start after diagnostics/recovery attempt: %s",
+                extra,
+            )
+            raise RuntimeError(
+                "maeRunSimulation returned nil (simulation not started). "
+                "If this is ADE Explorer, use Explorer run path "
+                "(sevRun(sevSession(window))) instead of maeRunSimulation. "
+                "Also verify at least one analysis is enabled and no modal dialog "
+                "is blocking the GUI. " + extra
+            )
 
     # Poll marker via SSH (SKILL channel stays free)
-    status = wait_until_done(client, timeout=timeout, _marker=marker)
+    status = _wait_until_done(client, marker, timeout=timeout)
     return history, status
 
 

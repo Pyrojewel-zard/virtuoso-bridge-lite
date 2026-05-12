@@ -149,20 +149,21 @@
     <pre><code><span class="cmt"># 1. Install</span>
 <span class="cmd">pip install -e .</span>
 
-<span class="cmt"># 2. Generate config</span>
-<span class="cmd">virtuoso-bridge init</span>        <span class="cmt"># creates .env template</span>
+<span class="cmt"># 2. Generate config (fills host/user/jump + port in one shot)</span>
+<span class="cmd">virtuoso-bridge init</span> user@host <span class="cmd">-J</span> user@jump-host
+<span class="cmt">#   or `virtuoso-bridge init` for an empty template to edit manually</span>
 
-<span class="cmt"># 3. Edit .env with your connection details</span>
+<span class="cmt"># 3. (only if step 2 left anything blank) edit ~/.virtuoso-bridge/.env</span>
 <span class="cmt"># VB_REMOTE_HOST=my-server</span>
 <span class="cmt"># VB_REMOTE_USER=username</span>
-<span class="cmt"># VB_REMOTE_PORT=65081</span>
+<span class="cmt"># VB_REMOTE_PORT=65081     # auto-assigned by hashing VB_REMOTE_USER</span>
 <span class="cmt"># VB_LOCAL_PORT=65082</span>
 
 <span class="cmt"># 4. Start the bridge</span>
 <span class="cmd">virtuoso-bridge start</span>
 
-<span class="cmt"># 5. Load SKILL in Virtuoso CIW</span>
-<span class="cmt"># load("/path/to/virtuoso-bridge-lite/core/ramic_bridge.il")</span>
+<span class="cmt"># 5. Load SKILL in Virtuoso CIW (path printed by `virtuoso-bridge start`)</span>
+<span class="cmt"># load("/tmp/virtuoso_bridge_&lt;user&gt;/virtuoso_bridge/virtuoso_setup.il")</span>
 
 <span class="cmt"># 6. Verify</span>
 <span class="cmd">virtuoso-bridge status</span></code></pre>
@@ -195,7 +196,7 @@ VB_REMOTE_USER_worker1=user2</code></pre>
 
 bridge = VirtuosoClient.<span class="fn">local</span>(port=65432)
 bridge.<span class="fn">execute_skill</span>(<span class="str">"1+2"</span>)</code></pre>
-    <p style="color:var(--muted);font-size:0.9rem">No tunnel, no <code>.env</code>, no SSH. Just load <code>core/ramic_bridge.il</code> in Virtuoso CIW and connect.</p>
+    <p style="color:var(--muted);font-size:0.9rem">Set <code>VB_REMOTE_HOST=localhost</code> and run <code>virtuoso-bridge start</code> — it skips the SSH tunnel, deploys the bridge files locally, and prints the <code>load(...)</code> line for the CIW.</p>
   </div>
 
   <!-- API Reference -->
@@ -273,21 +274,27 @@ result = sim.<span class="fn">run_simulation</span>(<span class="str">"tb_inv.sc
     <div class="api-group">
       <h3>ADE Maestro (Assembler)</h3>
       <pre><code><span class="kw">from</span> virtuoso_bridge.virtuoso.maestro <span class="kw">import</span> (
-    open_session, close_session, read_config, read_results,
-    run_simulation, wait_until_done, export_waveform,
+    snapshot, open_gui_session, close_gui_session,
+    run_and_wait, read_results, export_waveform,
 )
 
-<span class="cmt"># Read existing simulation setup</span>
-session = <span class="fn">open_session</span>(client, <span class="str">"myLib"</span>, <span class="str">"myTB"</span>)
-config = <span class="fn">read_config</span>(client, session)
+<span class="cmt"># Snapshot the focused maestro window — no session arg needed.
+# Returns dict with raw_sections (list of (skill_probe, raw_output)
+# tuples — no Python parsing of SKILL alists).</span>
+d = <span class="fn">snapshot</span>(client)
+<span class="cmt"># Or also write the full disk dump (raw + filtered XMLs +
+# state_from_skill.txt + per-point run files via tar). Files
+# pulled are governed by snapshot_filter.yaml — edit to add/drop.</span>
+d = <span class="fn">snapshot</span>(client, output_root=<span class="str">"output/"</span>)
+<span class="cmt"># Pin a specific history instead of the auto-pick (mtime-first).</span>
+d = <span class="fn">snapshot</span>(client, output_root=<span class="str">"output/"</span>, history=<span class="str">"Interactive.160"</span>)
 
-<span class="cmt"># Run simulation (non-blocking, LSCS parallel)</span>
-<span class="fn">run_simulation</span>(client)
-<span class="fn">wait_until_done</span>(client)  <span class="cmt"># axlSessionConnect callback, zero blocking</span>
-
-<span class="cmt"># Collect results + export waveforms</span>
+<span class="cmt"># Open / run / collect — GUI mode is required for run_and_wait</span>
+session = <span class="fn">open_gui_session</span>(client, <span class="str">"myLib"</span>, <span class="str">"myTB"</span>)
+<span class="fn">run_and_wait</span>(client, session)  <span class="cmt"># non-blocking, SKILL callback + ssh polling</span>
 results = <span class="fn">read_results</span>(client, session, lib=<span class="str">"myLib"</span>, cell=<span class="str">"myTB"</span>)
-<span class="fn">export_waveform</span>(client, session, <span class="str">'dB20(mag(v("/OUT")))'</span>, <span class="str">"gain.txt"</span>)</code></pre>
+<span class="fn">export_waveform</span>(client, session, <span class="str">'dB20(mag(v("/OUT")))'</span>, <span class="str">"gain.txt"</span>)
+<span class="fn">close_gui_session</span>(client)</code></pre>
     </div>
 
     <div class="api-group">
@@ -317,12 +324,40 @@ bridge = VirtuosoClient.<span class="fn">local</span>(port=65432)</code></pre>
       <h3>CLI commands</h3>
       <table>
         <tr><th>Command</th><th>Description</th></tr>
-        <tr><td><code>virtuoso-bridge init</code></td><td>Create .env template</td></tr>
+        <tr><td><code>virtuoso-bridge init [user@host] [-J user@jump] [--force]</code></td><td>Write <code>~/.virtuoso-bridge/.env</code>; arguments fill host/user/jump, <code>--force</code> overwrites an existing file</td></tr>
         <tr><td><code>virtuoso-bridge start</code></td><td>Start SSH tunnel + deploy daemon</td></tr>
         <tr><td><code>virtuoso-bridge status</code></td><td>Check tunnel, daemon, hostname, Spectre license</td></tr>
         <tr><td><code>virtuoso-bridge restart</code></td><td>Restart tunnel</td></tr>
         <tr><td><code>virtuoso-bridge stop</code></td><td>Stop tunnel</td></tr>
+        <tr><td><code>virtuoso-bridge windows</code></td><td>List Virtuoso windows + focused session</td></tr>
+        <tr><td><code>virtuoso-bridge snapshot</code></td><td>Dump focused maestro's SKILL probe sections to stdout</td></tr>
+        <tr><td><code>virtuoso-bridge snapshot -o ROOT [--history NAME]</code></td><td>Full disk dump of the focused session to <code>ROOT/&lt;ts&gt;__&lt;lib&gt;__&lt;cell&gt;/</code>: raw + filtered setup XMLs, <code>state_from_skill.txt</code>, latest-run per-point files. <code>--history</code> pins a specific maestro history (e.g. <code>Interactive.160</code>); otherwise auto-picks by mtime. File whitelist lives in <code>virtuoso/maestro/snapshot_filter.yaml</code> — edit to reshape the dump (no code change).</td></tr>
+        <tr><td><code>virtuoso-bridge screenshot</code></td><td>Capture a Virtuoso window</td></tr>
       </table>
+    </div>
+
+    <div class="api-group">
+      <h3>What <code>snapshot -o</code> pulls</h3>
+      <p>One command dumps the focused maestro session's setup <em>and</em> the latest run's per-point files to a timestamped folder:</p>
+      <pre><code><span class="cmt"># auto-pick newest history</span>
+<span class="cmd">virtuoso-bridge snapshot -o output</span>
+
+<span class="cmt"># or pin a specific history (e.g. side-by-side comparison of two runs)</span>
+<span class="cmd">virtuoso-bridge snapshot -o output --history Interactive.160</span></code></pre>
+      <p>Layout of the output directory:</p>
+      <pre><code>output/&lt;YYYYMMDD_HHMMSS&gt;__&lt;lib&gt;__&lt;cell&gt;/
+├── maestro.sdb, active.state                    <span class="cmt"># raw Cadence files</span>
+├── state_from_sdb.xml                           <span class="cmt"># sdb filtered (~10× smaller)</span>
+├── state_from_active_state.xml                  <span class="cmt"># active.state filtered</span>
+├── state_from_skill.txt                         <span class="cmt"># SKILL-probe setup summary</span>
+└── &lt;history&gt;/
+    ├── &lt;history&gt;.{log,rdb,msg.db}               <span class="cmt"># run-level (rdb/msg.db are SQLite)</span>
+    └── &lt;pt&gt;/&lt;tb&gt;/
+        ├── netlist/  → netlist, input.scs, qpInformation.ils, paramInfo.ils
+        └── psf/      → spectre.out, logFile, dcOp.dc, *.ac, *.tran, *.noise, ...</code></pre>
+      <p>Per-point <code>netlist/</code> keeps only the 4 files that describe the design (main SPICE netlist, testbench top-level, FOM/output-expression definitions, corner label). <code>psf/</code> keeps stdout + logs + non-binary analysis results.</p>
+      <p>File selection is governed by <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/blob/main/src/virtuoso_bridge/virtuoso/maestro/snapshot_filter.yaml"><code>virtuoso/maestro/snapshot_filter.yaml</code></a> — every entry carries a per-file tag (<code>[KEEP]</code>, <code>[REDUNDANT]</code>, <code>[SCAFFOLDING]</code>, <code>[METADATA]</code>, <code>[DEBUG-ONLY]</code>, <code>[GUI-CONFIG]</code>, <code>[RARELY]</code>, <code>[NEVER]</code>). Uncomment a line to add a file, comment it to skip. No package reinstall needed; the YAML is reread on every snapshot call.</p>
+      <p>Deliberately not pulled, regardless of YAML: <code>*.raw</code> binary waveforms, <code>wavedb/</code>, and PDK info dumps (<code>modelParameter.info</code>, <code>primitives.info.*</code>). Read waveforms through <code>reader.runs.read_results</code> instead of copying the binaries.</p>
     </div>
   </div>
 
@@ -331,12 +366,13 @@ bridge = VirtuosoClient.<span class="fn">local</span>(port=65432)</code></pre>
     <h2>Examples</h2>
     <table>
       <tr><th>Category</th><th>Example</th><th>Description</th></tr>
-      <tr><td rowspan="6">Basic</td><td><code>01_execute_skill.py</code></td><td>Run SKILL expressions (Hello World)</td></tr>
-      <tr><td><code>02_load_il.py</code></td><td>Load .il file into Virtuoso</td></tr>
-      <tr><td><code>03_list_library_cells.py</code></td><td>Enumerate libraries and cells</td></tr>
-      <tr><td><code>04_screenshot.py</code></td><td>Capture window screenshot and download</td></tr>
+      <tr><td rowspan="7">Basic</td><td><code>00_ciw_output_vs_return.py</code></td><td>Compare CIW print vs SKILL return value</td></tr>
+      <tr><td><code>01_execute_skill.py</code></td><td>Run SKILL expressions (Hello World)</td></tr>
+      <tr><td><code>02_ciw_print.py</code></td><td>Print to Virtuoso CIW</td></tr>
+      <tr><td><code>03_load_il.py</code></td><td>Load .il file into Virtuoso</td></tr>
+      <tr><td><code>04_list_library_cells.py</code></td><td>Enumerate libraries and cells</td></tr>
       <tr><td><code>05_multiline_skill.py</code></td><td>Execute multi-line SKILL code</td></tr>
-      <tr><td><code>06_ciw_print.py</code></td><td>Print to Virtuoso CIW</td></tr>
+      <tr><td><code>06_screenshot.py</code></td><td>Capture window screenshot and download</td></tr>
       <tr><td rowspan="6">Layout</td><td><code>01_create_layout.py</code></td><td>Create layout with NMOS/PMOS/CFMOM instances</td></tr>
       <tr><td><code>02_add_polygon.py</code></td><td>Add polygon shapes</td></tr>
       <tr><td><code>03_add_via.py</code></td><td>Place vias</td></tr>
@@ -348,14 +384,17 @@ bridge = VirtuosoClient.<span class="fn">local</span>(port=65432)</code></pre>
       <tr><td><code>02_read_connectivity.py</code></td><td>Read nets, pins, instances</td></tr>
       <tr><td><code>03_read_instance_params.py</code></td><td>Read instance parameters</td></tr>
       <tr><td><code>08_import_cdl_cap_array.py</code></td><td>Import CDL netlist via spiceIn</td></tr>
-      <tr><td rowspan="4">Maestro</td><td><code>01_read_open_maestro.py</code></td><td>Read open Maestro session</td></tr>
-      <tr><td><code>02_gui_open_read_close.py</code></td><td>GUI mode: open, read config, close</td></tr>
-      <tr><td><code>06a_rc_create.py</code></td><td>Create Maestro test for RC filter</td></tr>
-      <tr><td><code>06b/06c_rc_simulate.py</code></td><td>Run simulation and read results</td></tr>
-      <tr><td rowspan="4">Spectre</td><td><code>01_veriloga_adc_dac.py</code></td><td>4-bit ADC/DAC with Verilog-A</td></tr>
+      <tr><td rowspan="7">Maestro</td><td><code>01_read_focused_maestro.py</code></td><td>snapshot() of focused maestro (in-memory, JSON to stdout)</td></tr>
+      <tr><td><code>02_snapshot_with_metrics.py</code></td><td>Full disk dump (snapshot -o ROOT) of focused maestro</td></tr>
+      <tr><td><code>03_bg_open_read_close_maestro.py</code></td><td>Background open/close + read (no GUI window)</td></tr>
+      <tr><td><code>04_gui_open_snapshot_close.py</code></td><td>GUI open → snapshot → close (owns lifecycle)</td></tr>
+      <tr><td><code>05_gui_session_lifecycle.py</code></td><td>open_gui_session / close_gui_session lifecycle test</td></tr>
+      <tr><td><code>06a_rc_create.py</code></td><td>Create Maestro test for RC filter (auto-timestamped cell)</td></tr>
+      <tr><td><code>06b_rc_simulate_and_read.py</code></td><td>Run simulation in background, read results, export waveforms</td></tr>
+      <tr><td rowspan="4">Spectre</td><td><code>01_inverter_tran.py</code></td><td>CMOS inverter transient simulation</td></tr>
+      <tr><td><code>01_veriloga_adc_dac.py</code></td><td>4-bit ADC/DAC with Verilog-A</td></tr>
       <tr><td><code>02_cap_dc_ac.py</code></td><td>RC filter DC+AC frequency response</td></tr>
       <tr><td><code>04_strongarm_pss_pnoise.py</code></td><td>StrongArm comparator PSS+Pnoise</td></tr>
-      <tr><td><code>flower.py</code></td><td>Draw a flower in layout (fun demo)</td></tr>
     </table>
   </div>
 

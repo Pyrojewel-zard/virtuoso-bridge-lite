@@ -4,13 +4,53 @@
 import sys
 import socket
 import os
-import fcntl
 import json
 import signal
 import threading
 import time
 import errno
 import traceback
+
+# Counters surfaced to the SKILL monitor via stderr [RB-stat] lines.
+# Throttled to ~1 Hz so heavy traffic doesn't flood stderr.
+_RB_START_T = time.time()
+_RB_CALLS = 0
+_RB_ERRORS = 0
+_RB_LAST_STAT_T = 0.0
+
+
+def _emit_stat(force=False):
+    global _RB_LAST_STAT_T
+    now = time.time()
+    if not force and now - _RB_LAST_STAT_T < 1.0:
+        return
+    _RB_LAST_STAT_T = now
+    try:
+        sys.stderr.write(
+            "[RB-stat] count={c} errors={e} uptime={u}\n".format(
+                c=_RB_CALLS, e=_RB_ERRORS, u=int(now - _RB_START_T),
+            )
+        )
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+try:
+    import fcntl as _fcntl
+except ImportError:
+    _fcntl = None
+
+_fcntl_fn = getattr(_fcntl, "fcntl", None)
+_f_getfl = getattr(_fcntl, "F_GETFL", 3)
+_f_setfl = getattr(_fcntl, "F_SETFL", 4)
+_o_nonblock = int(getattr(os, "O_NONBLOCK", 0))
+
+
+def _fcntl_or_die(*args):
+    if _fcntl_fn is None:
+        raise RuntimeError("fcntl is unavailable on this platform")
+    return _fcntl_fn(*args)
 
 HOST = sys.argv[1]
 PORT = int(sys.argv[2])
@@ -29,14 +69,14 @@ def get_grandparent_pid():
 
 virtuoso_pid = get_grandparent_pid()
 
-# Set stdin to non-blocking, keep stdout blocking
-stdin_fd = sys.stdin.buffer.raw.fileno()
-stdin_fl = fcntl.fcntl(stdin_fd, fcntl.F_GETFL)
-fcntl.fcntl(stdin_fd, fcntl.F_SETFL, stdin_fl | os.O_NONBLOCK)
+# Set stdin to non-blocking, keep stdout blocking.
+stdin_fd = sys.stdin.fileno()
+stdin_fl = _fcntl_or_die(stdin_fd, _f_getfl)
+_fcntl_or_die(stdin_fd, _f_setfl, stdin_fl | _o_nonblock)
 
-stdout_fd = sys.stdout.buffer.raw.fileno()
-stdout_fl = fcntl.fcntl(stdout_fd, fcntl.F_GETFL)
-fcntl.fcntl(stdout_fd, fcntl.F_SETFL, stdout_fl & ~os.O_NONBLOCK)
+stdout_fd = sys.stdout.fileno()
+stdout_fl = _fcntl_or_die(stdout_fd, _f_getfl)
+_fcntl_or_die(stdout_fd, _f_setfl, stdout_fl & ~_o_nonblock)
 
 watchdog_timer = None
 
@@ -175,6 +215,15 @@ def handle_external_connection(conn, addr):
 
         _safe_sendall(conn, returnData)
 
+        # Stats: count this call and tag as error if SKILL sent NAK
+        # (0x15) or the response is empty/malformed.  Throttled emit
+        # below pushes the totals to SKILL via stderr.
+        global _RB_CALLS, _RB_ERRORS
+        _RB_CALLS += 1
+        if not returnData or returnData[:1] != b"\x02":
+            _RB_ERRORS += 1
+        _emit_stat()
+
         # Clean up temp file if we used one
         if tmp_il_path:
             try:
@@ -204,6 +253,38 @@ def start_server():
                 sys.exit(1)
             raise
         s.listen(1)
+        # Banner -- SKILL side parses this from stderr to populate
+        # RBLastPid / RBLastBind / RBLastHost / RBLastIP for the monitor
+        # display.  Format is frozen:
+        #   "[RB-banner] pid=N bind=H:P host=NAME ip=A.B.C.D"
+        try:
+            _hn = socket.gethostname() or "unknown"
+        except Exception:
+            _hn = "unknown"
+        # Best-effort outward-facing IPv4: ask the kernel which source
+        # IP it would pick for outbound traffic.  UDP connect() sends
+        # nothing on the wire, it just runs the route lookup so that
+        # getsockname() returns the chosen local address.  Bypasses
+        # /etc/hosts entries that map hostname to 127.0.0.1.
+        _ip = ""
+        try:
+            _probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                _probe.connect(("8.8.8.8", 80))
+                _ip = _probe.getsockname()[0]
+            finally:
+                _probe.close()
+        except Exception:
+            try:
+                _ip = socket.gethostbyname(socket.gethostname())
+            except Exception:
+                _ip = ""
+        sys.stderr.write(
+            "[RB-banner] pid={pid} bind={host}:{port} host={hn} ip={ip}\n".format(
+                pid=os.getpid(), host=HOST, port=PORT, hn=_hn, ip=(_ip or "unknown"),
+            )
+        )
+        sys.stderr.flush()
         while True:
             conn, addr = s.accept()
             try:

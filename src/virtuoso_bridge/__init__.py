@@ -1,5 +1,7 @@
 """virtuoso-bridge – Python bridge for executing SKILL in Cadence Virtuoso."""
 
+from __future__ import annotations
+
 from importlib.metadata import version as _pkg_version
 
 try:
@@ -16,6 +18,7 @@ from virtuoso_bridge.models import (
     VirtuosoResult,
 )
 from virtuoso_bridge.spectre.runner import SpectreSimulator
+from virtuoso_bridge.wrappers import SanitizingClient
 
 def decode_skill_output(raw: str | None) -> str:
     """Decode raw SKILL output: strip outer quotes, unescape \\\\n and \\\\"."""
@@ -27,6 +30,7 @@ __all__ = [
     "VirtuosoClient",
     "SSHClient",
     "SpectreSimulator",
+    "SanitizingClient",
     "VirtuosoResult",
     "ExecutionStatus",
     "SkillResult",

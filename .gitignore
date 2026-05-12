@@ -63,6 +63,8 @@ cds.lib.lock
 # === Project-specific ===
 output/
 logs/
+example_artifacts/
+tmp/
 arxiv/
 texput.log
 optimization/

@@ -3,18 +3,22 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/stargazers"><img src="https://img.shields.io/github/stars/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=f5c542&logo=github" alt="GitHub stars"/></a>
-  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/network/members"><img src="https://img.shields.io/github/forks/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=f5c542" alt="GitHub forks"/></a>
-  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/issues"><img src="https://img.shields.io/github/issues/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=3fb950" alt="Open Issues"/></a>
-  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/commits/main"><img src="https://img.shields.io/github/last-commit/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=3fb950" alt="Last Commit"/></a>
-  <a href="https://virtuoso-bridge.tokenzhang.com"><img src="https://img.shields.io/badge/docs-website-blue" alt="Website"/></a>
+  <a href="https://oosmetrics.com/repo/Arcadia-1/virtuoso-bridge-lite"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/8d369c0f-7036-4e79-9ed3-a71689ba4660.svg" alt="oosmetrics — Top 5 in Fullstack by acceleration (2026-05-09)"/></a>
 </p>
 
 <p align="center">
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.9%2B-blue.svg" alt="Python 3.9+"/></a>
+  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/stargazers"><img src="https://img.shields.io/github/stars/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=f5c542&logo=github&v=20260511" alt="GitHub stars"/></a>
+  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/network/members"><img src="https://img.shields.io/github/forks/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=f5c542" alt="GitHub forks"/></a>
+  <a href="stats/README.md"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FArcadia-1%2Fvirtuoso-bridge-lite%2Fmain%2Fstats%2Fclones-badge.json&style=flat-square&v=2" alt="Clones"/></a>
+  <a href="stats/README.md"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FArcadia-1%2Fvirtuoso-bridge-lite%2Fmain%2Fstats%2Fviews-badge.json&style=flat-square&v=2" alt="Views"/></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/issues"><img src="https://img.shields.io/github/issues/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=3fb950" alt="Open Issues"/></a>
+  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/commits/main"><img src="https://img.shields.io/github/last-commit/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=3fb950" alt="Last Commit"/></a>
+  <a href="https://virtuoso-bridge.tokenzhang.com"><img src="https://img.shields.io/badge/docs-website-blue" alt="Website"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License: MIT"/></a>
   <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/></a>
-  <img src="https://img.shields.io/badge/AI%20Native-agent--driven-blueviolet" alt="AI Native"/>
 </p>
 
 A new infrastructure for **Agentic Analog and Mixed-Signal Design**. LLM Agents drive Cadence Virtuoso instances — locally or remotely — turning tedious handcrafting into automated design flows.
@@ -55,7 +59,7 @@ A new infrastructure for **Agentic Analog and Mixed-Signal Design**. LLM Agents 
 **In short:** Both projects are built on the same Cadence SKILL IPC facility, using the same core mechanism: `ipcBeginProcess` + `evalstring` + `ipcWriteProcess`. Here are the core lines from each:
 
 <details>
-<summary><b>virtuoso-bridge-lite</b> — <code>core/ramic_bridge.il</code></summary>
+<summary><b>virtuoso-bridge-lite</b> — <code>src/virtuoso_bridge/virtuoso/basic/resources/ramic_bridge.il</code></summary>
 
 ```skill
 RBIpc = ipcBeginProcess(
@@ -94,9 +98,15 @@ The divergence is in what's built on top: skillbridge stays thin — a Pythonic 
 
 ```bash
 pip install -e .              # install
-virtuoso-bridge init          # generate ~/.virtuoso-bridge/.env — fill in your SSH host
+virtuoso-bridge init user@host [-J user@jump-host]   # write ~/.virtuoso-bridge/.env in one shot
+                                                     # (no args: empty template — edit it yourself)
 virtuoso-bridge start         # start SSH tunnel
 virtuoso-bridge status        # verify connection
+virtuoso-bridge windows       # list all open Virtuoso windows
+virtuoso-bridge screenshot    # screenshot CIW (or: current, N)
+virtuoso-bridge export-visio MyLib MyCell -o MyCell.vsdx  # Windows + Visio
+                                                          # (NMOS/PMOS bulk pin `B` is dropped by default;
+                                                          #  add --include-body-pins to draw bulk nets too)
 ```
 
 ```python
@@ -106,6 +116,58 @@ client.execute_skill("1+2")  # VirtuosoResult(status=SUCCESS, output='3')
 ```
 
 For detailed setup (jump hosts, multi-profile, local mode), see [`AGENTS.md`](AGENTS.md).
+
+## Snapshot a maestro run
+
+Pull the currently-focused maestro session's setup + latest-run artifacts to a local folder:
+
+```bash
+virtuoso-bridge snapshot -o output                       # auto-picks newest history
+virtuoso-bridge snapshot -o output --history Interactive.160   # pin a specific history
+```
+
+Output tree (one example):
+
+```
+output/20260422_142137__MyLib__myTB/
+├── maestro.sdb, active.state                    # raw Cadence files
+├── state_from_sdb.xml, state_from_active_state.xml  # filtered, high-signal
+├── state_from_skill.txt                         # SKILL-probe setup summary
+└── Interactive.N/
+    ├── Interactive.N.{log,rdb,msg.db}           # run-level (rdb = SQLite)
+    └── <pt>/<tb>/
+        ├── netlist/   → netlist, input.scs, qpInformation.ils, paramInfo.ils
+        └── psf/       → spectre.out, logFile, dcOp.dc, *.ac, *.tran, ...
+```
+
+Per-point `netlist/` keeps only the 4 files that actually describe the design (main SPICE netlist, testbench top level, FOM definitions, corner label). Psf keeps stdout + logs + non-binary analysis results. The full rule set — including what's commented out and why — lives in [`src/virtuoso_bridge/virtuoso/maestro/snapshot_filter.yaml`](src/virtuoso_bridge/virtuoso/maestro/snapshot_filter.yaml); edit the YAML (uncomment / comment lines) to add or drop files, no code change needed. Binary waveforms (`*.raw`, `wavedb/`) are never pulled — read them through `reader.runs.read_results` instead.
+
+## Exposing skills to your coding agent
+
+The `skills/` directory ships [Claude Code](https://claude.com/claude-code) skills
+(`virtuoso`, `spectre`, `optimizer`). They are **not** symlinked into the repo's
+`.claude/skills/` on purpose — repo-tracked symlinks break on Windows and hardcode
+one user's absolute paths. Instead, each user links them into their own
+`~/.claude/skills/` once after cloning:
+
+```bash
+# macOS / Linux
+mkdir -p ~/.claude/skills
+ln -s "$(pwd)/skills/virtuoso"  ~/.claude/skills/virtuoso
+ln -s "$(pwd)/skills/spectre"   ~/.claude/skills/spectre
+ln -s "$(pwd)/skills/optimizer" ~/.claude/skills/optimizer
+```
+
+```powershell
+# Windows (PowerShell, Developer Mode or elevated shell)
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.claude\skills" | Out-Null
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\virtuoso"  -Target "$PWD\skills\virtuoso"
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\spectre"   -Target "$PWD\skills\spectre"
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.claude\skills\optimizer" -Target "$PWD\skills\optimizer"
+```
+
+Cursor and other agents that load skills from a user-level directory follow the
+same pattern — point their skills path at `skills/` in this repo.
 
 ## Architecture
 
@@ -141,3 +203,13 @@ If you use virtuoso-bridge in academic work, please cite:
 - **Xintian Li** — Tsinghua University
 - **Nan Sun** — Tsinghua University
 - **Lu Jie** — Tsinghua University
+
+## Star History
+
+<a href="https://star-history.com/#Arcadia-1/virtuoso-bridge-lite&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Arcadia-1/virtuoso-bridge-lite&type=Date&theme=dark"/>
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Arcadia-1/virtuoso-bridge-lite&type=Date"/>
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Arcadia-1/virtuoso-bridge-lite&type=Date"/>
+  </picture>
+</a>
