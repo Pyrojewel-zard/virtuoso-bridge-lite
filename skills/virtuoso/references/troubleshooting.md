@@ -18,6 +18,58 @@
 | "cellview is locked" | .cdslck 文件残留 | `MaestroClearLocks()` 或手动删除 |
 | maeRestoreHistory 无效果 | maestro 未在 edit mode | 先 `maeMakeEditable()` |
 
+### `csh()` returns `t`/`nil`, not command output
+Never use `csh()` or `sh()` to verify files or read command output. They only return success/failure. Use `download_file` (SSH/SCP) for all remote file operations.
+
+### `procedurep()` returns `nil` for compiled functions
+Functions like `maeCreateNetlistForCorner` are compiled into .cxt — `procedurep()` returns nil even though they work. Test by calling with wrong args instead.
+
+### `printf` inside `foreach` loses output to Python
+`execute_skill()` returns the **value** of the SKILL expression, not whatever `printf` wrote to the CIW. So a loop that prints per iteration leaves Python holding only the loop's return value (often the input list, which prints as opaque `dd:0x…` handles):
+```scheme
+foreach(lyr ddGetLibList() printf("%s\n" lyr~>name))  ; CIW shows names, Python sees the list of dd objects
+```
+Three idiomatic save-the-output patterns:
+
+1. **`sprintf(nil ...)` + `strcat`** — accumulate as a string return value:
+   ```scheme
+   let((buf)
+     buf = ""
+     foreach(lyr layers
+       buf = strcat(buf sprintf(nil "%s\n" lyr)))
+     buf)
+   ```
+2. **Return a structured list** — `cons + reverse`, then parse in Python:
+   ```scheme
+   let((out)
+     out = nil
+     foreach(lyr layers
+       out = cons(list(lyr lyr~>foo lyr~>bar) out))
+     reverse(out))
+   ```
+   Combine with `client.fetch()` when iterating over DFII objects.
+3. **`outfile` + `download_file`** — keep the literal `printf` style, route to a file:
+   ```python
+   client.execute_skill('''
+   let((p)
+     p = outfile("/tmp/probe.log")
+     foreach(lyr layers fprintf(p "%s\n" lyr))
+     close(p))
+   ''')
+   client.download_file("/tmp/probe.log", "logs/probe.log")
+   ```
+
+Rule of thumb: pattern 2 for structured data, pattern 3 for ad-hoc multi-line diagnostics.
+
+### `inst~>prop` returns nil for PDK devices
+MOS transistor parameters (W, L, nf, fingers, m) are stored in CDF, not in schematic instance properties. Use `cdfGetInstCDF(inst)` to read them:
+```scheme
+let((cdf)
+  cdf = cdfGetInstCDF(inst)
+  printf("W=%s L=%s nf=%s\n" cdf~>w~>value cdf~>l~>value cdf~>nf~>value))
+```
+`inst~>prop` only works for non-CDF properties like user-added annotations.
+
 ---
 
 ## 二、GUI 弹窗阻塞（最常见问题）
@@ -236,7 +288,67 @@ ssh <VB_REMOTE_HOST> "echo ok"
 
 ---
 
+---
+
 ## 九、SSH 执行路径问题
+
+## Window / View Management
+
+### `hiGetCurrentWindow()` returns the wrong window after open/close churn
+After `hiCloseWindow` + `open_window` sequences (or any window-shuffling), the "current" window pointer can land on an unrelated panel — symptoms are `winName=nil`, `isLayoutMode=nil`, `viewBox=nil`. All subsequent `hiZoom` / `hiRedraw` calls then silently target the wrong window and the layout canvas stays empty.
+
+**Diagnose:**
+```scheme
+let((w) w = hiGetCurrentWindow()
+  sprintf(nil "wid=%L cv=%L lyt=%L"
+          w (when(w~>cellView w~>cellView~>cellName)) w~>isLayoutMode))
+```
+
+**Fix — look up the window by content, drive it by wid explicitly:**
+```python
+WID = next(w["num"] for w in client.list_windows()
+           if "MY_CELL" in (w.get("name") or "") and "layout" in (w.get("name") or ""))
+client.execute_skill(f'hiZoom(window({WID}) list(0:0 700:700))')
+client.execute_skill(f'hiRedraw(window({WID}))')
+```
+`window(N)` is the SKILL way to fetch a window by its integer ID — robust to focus changes. Never rely on `hiGetCurrentWindow()` for multi-step automation.
+
+### `client.screenshot(target=...)` needs an `int`, not `str`
+Targets are dispatched by Python type:
+- `"ciw"` → CIW
+- `"current"` → `hiGetCurrentWindow()` (see caveat above)
+- `int` → window ID lookup via `windowNum`
+- any other `str` → treated as a **view name** (`layout`/`schematic`/`maestro`)
+
+`client.screenshot(target=str(wid))` ends up in the view-name branch and errors with `Window not found: <number>`. Always cast: `target=int(wid)`.
+
+### Stale `~>cellView` handle after delete+recreate
+If you `ddDeleteObj` a cell and then `dbOpenCellViewByType("w")` a new one with the same name, any pre-existing window still holds a pointer to the **old** cellview. Symptoms: layout canvas all black, `cv~>shapes` on the window's cv is empty, but `dbOpenCellViewByType(... "r")` from a fresh handle shows the correct shapes on disk.
+
+**Fix:** close the stale window first, then re-open:
+```python
+for w in client.list_windows():
+    nm = w.get("name") or ""
+    if "MY_CELL" in nm and "layout" in nm:
+        client.execute_skill(f'hiCloseWindow(window({w["num"]}))')
+client.open_window(LIB, CELL, view="layout")
+```
+Closing drops the stale reference; the next `open_window` reads the new cellview from disk.
+
+### `rexMatchp` errors on `nil` target abort the enclosing `let`
+`hiGetWindowName(w)` returns `nil` for auxiliary panels (info dialogs, etc.). Passing `nil` to `rexMatchp` is a non-recoverable SKILL error inside a `let` — the entire block silently returns an empty string, no error surfaces in Python.
+
+**Fix:** guard the predicate:
+```scheme
+foreach(w hiGetWindowList()
+  let((nm) nm = hiGetWindowName(w)
+    when(nm && rexMatchp("MY_CELL layout" nm) ...)))
+```
+Or skip SKILL string-matching entirely and filter on the Python side via `client.list_windows()` — much easier to debug.
+
+---
+
+## Netlist / si
 
 ### 症状
 - `ssh RFRLSERVER5 'python3 /path/to/script.py'` 报错 "no such file or directory"
