@@ -466,12 +466,16 @@ def _print_spectre_status(profile: str | None, suffix: str) -> None:
 
     if is_local:
         try:
-            spectre_path = shutil.which("spectre")
+            spectre_bin = (
+                os.getenv(f"VB_SPECTRE_BIN{suffix}", "").strip()
+                or os.getenv("VB_SPECTRE_BIN", "").strip()
+            )
+            spectre_path = spectre_bin or shutil.which("spectre")
             version = None
             if spectre_path:
                 try:
                     result = subprocess.run(
-                        ["spectre", "-V"],
+                        [spectre_path, "-V"],
                         capture_output=True, text=True, timeout=10,
                     )
                     for line in (result.stdout + result.stderr).splitlines():
@@ -500,6 +504,29 @@ def _print_spectre_status(profile: str | None, suffix: str) -> None:
             print("\n[spectre] local mode (no SSH runner)")
             return
         runner._verbose = False
+
+        spectre_bin = (
+            os.getenv(f"VB_SPECTRE_BIN{suffix}", "").strip()
+            or os.getenv("VB_SPECTRE_BIN", "").strip()
+        )
+
+        if spectre_bin:
+            # Explicit binary path — skip auto-detection.
+            quoted = shlex.quote(spectre_bin)
+            check_cmd = f"{quoted} -V 2>&1 | head -1"
+            print("\n[spectre] probing...", flush=True)
+            result = runner.run_command(check_cmd, timeout=60)
+            stdout = result.stdout.strip()
+            version = None
+            for line in stdout.splitlines():
+                if line.strip().startswith("@(#)$CDS:"):
+                    version = line.strip()
+                    break
+            print("[spectre] OK")
+            print(f"  path    : {spectre_bin}")
+            if version:
+                print(f"  version : {version}")
+            return
 
         # Two detection strategies, fused into a single SSH handshake:
         #
@@ -542,7 +569,7 @@ def _print_spectre_status(profile: str | None, suffix: str) -> None:
             combined = f"{{ {fast}; }} || {{ {slow}; }}"
         else:
             combined = fast
-        check_cmd = f"bash -c {shlex.quote(combined)}"
+        check_cmd = f"bash -l -c {shlex.quote(combined)}"
         print("\n[spectre] probing...", flush=True)
         result = runner.run_command(check_cmd, timeout=60)
         stdout = result.stdout.strip()
@@ -557,12 +584,12 @@ def _print_spectre_status(profile: str | None, suffix: str) -> None:
                 spectre_path = line
 
         if spectre_path:
-            print(f"[spectre] OK")
+            print("[spectre] OK")
             print(f"  path    : {spectre_path}")
             if version:
                 print(f"  version : {version}")
         else:
-            print(f"[spectre] NOT FOUND")
+            print("[spectre] NOT FOUND")
     except Exception as e:
         print(f"[spectre] error: {e}")
     finally:
