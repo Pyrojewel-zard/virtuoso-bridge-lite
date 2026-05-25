@@ -271,6 +271,8 @@ virtuoso-bridge export-visio LIB CELL -o out.vsdx  # Windows + Visio/pywin32 sch
                                                    #   --stencil PATH            override circuit.vss location
 virtuoso-bridge screenshot      # screenshot CIW (or: current, N)
 virtuoso-bridge dismiss-dialog  # dismiss blocking GUI dialogs via X11
+virtuoso-bridge skill-find <query>  # search SKILL functions by name (fuzzy/prefix/suffix/exact/regex)
+virtuoso-bridge skill-info <fn>  # get detailed More Info docs for a SKILL function
 ```
 
 ## Build
@@ -328,6 +330,7 @@ When working on a task, check this table to find relevant skills and references.
 | Domain | Skill | Entry point | Key references |
 |---|---|---|---|
 | **Virtuoso / SKILL** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/layout-skill-api.md`, `references/schematic-skill-api.md`, `references/maestro-skill-api.md`, `references/troubleshooting.md` |
+| **SKILL Finder** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/skill-finder-python-api.md` |
 | **Layout** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/layout-python-api.md`, `references/layout-skill-api.md` |
 | **Schematic** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/schematic-python-api.md`, `references/schematic-skill-api.md`, `references/schematic-recreation.md` |
 | **Maestro / ADE** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/maestro-python-api.md`, `references/maestro-skill-api.md`, `references/simulation-flow.md` |
