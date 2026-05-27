@@ -777,6 +777,7 @@ let((result winName ciwNum)
         *,
         mode: str = "fuzzy",
         limit: int = 50,
+        include_desc: bool = False,
         source_dir: str | Path | None = None,
         cache_dir: str | Path | None = None,
     ) -> list[dict]:
@@ -805,6 +806,8 @@ let((result winName ciwNum)
 
         limit : int
             Maximum results to return (default 50).
+        include_desc : bool
+            Also search in the description field (default: False).
         source_dir : str | Path | None
             Override the SKILL Finder source directory.  If None, the
             directory is auto-discovered on the remote server.
@@ -902,7 +905,7 @@ let((result winName ciwNum)
             logger.warning("find_skill: failed to load .fnd files — %s", exc)
             return []
 
-        results = finder.search(query, mode=mode, limit=limit)
+        results = finder.search(query, mode=mode, limit=limit, include_desc=include_desc)
         return [e.to_dict() for e in results]
 
 
