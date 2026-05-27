@@ -864,6 +864,66 @@ _EXPORT_VISIO_OPTS: dict = {
 }
 
 
+def cli_find(*, query: str | None, mode: str, limit: int, json_output: bool) -> int:
+    """Search SKILL API documentation from Cadence .fnd files.
+
+    On first run for a given server, downloads the SKILL Finder database
+    (~tens of MB) to a local cache.  Subsequent runs use the cache.
+    """
+    import json as _json
+    import sys
+
+    _load_cli_env()
+    from virtuoso_bridge import VirtuosoClient
+    from virtuoso_bridge.virtuoso.skill_finder import SKILLFinder
+
+    client = VirtuosoClient.from_env()
+
+    if not query:
+        print("Error: query argument required for 'skill-find'", file=sys.stderr)
+        return 1
+
+    results = client.find_skill(query or "", mode=mode, limit=limit)
+
+    if not query:
+        print("Error: query argument required for 'skill-find'", file=sys.stderr)
+        return 1
+
+    if json_output:
+        print(_json.dumps(results, indent=2, ensure_ascii=False))
+    else:
+        finder = SKILLFinder()
+        from virtuoso_bridge.virtuoso.skill_finder.parser import SkillEntry
+        entries = [SkillEntry(**r) for r in results]
+        print(finder.format_results(entries, query or ""))
+
+    return 0
+
+
+def cli_skill_info(*, func_name: str, json_output: bool) -> int:
+    """Get More Info documentation for a specific SKILL function."""
+    import json as _json
+
+    _load_cli_env()
+    from virtuoso_bridge import VirtuosoClient
+
+    client = VirtuosoClient.from_env()
+    result = client.get_skill_more_info(func_name)
+
+    if json_output:
+        print(_json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        if result is None:
+            print(f"No More Info found for: {func_name}")
+            return 1
+        print(f"More Info — {result['func_name']}")
+        print(f"  Source  : {result['file_path']}")
+        print(f"  Topic   : {result['topic'] or '(whole file)'}")
+        print()
+        print(result["plain_text"])
+    return 0
+
+
 def cli_windows() -> int:
     """List all open Virtuoso windows.
 
@@ -1223,6 +1283,57 @@ def build_parser() -> argparse.ArgumentParser:
     sp_screenshot.add_argument("--env", default=None,
                                help="Explicit .env file path (highest priority)")
 
+    sp_skill_find = subparsers.add_parser(
+        "skill-find",
+        help="Search SKILL API documentation from Cadence .fnd files",
+        description=(
+            "Queries the Cadence SKILL Finder database (``doc/finder/SKILL/*.fnd``)"
+            " on the remote server.  On first run the database is downloaded to a local\n"
+            "cache (``~/.cache/virtuoso_bridge/skill_finder/<host>/``);\n"
+            "subsequent runs use the cache without additional network traffic.\n\n"
+            "Search modes:\n"
+            "  fuzzy   case-insensitive substring match (default)\n"
+            "  prefix  name starts with query\n"
+            "  suffix  name ends with query\n"
+            "  exact   exact name match\n"
+            "  regex   Python regular expression match\n\n"
+            "Examples:\n"
+            "  virtuoso-bridge skill-find dbOpen\n"
+            '  virtuoso-bridge skill-find dbOpen --mode prefix\n'
+            '  virtuoso-bridge skill-find "^db.*" --mode regex\n'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp_skill_find.add_argument("query", nargs="?", default=None,
+                          help="Search string or pattern (required unless --json is set)")
+    sp_skill_find.add_argument("-m", "--mode", default="fuzzy",
+                          choices=["fuzzy", "prefix", "suffix", "exact", "regex"],
+                          help="Search mode (default: fuzzy)")
+    sp_skill_find.add_argument("-n", "--limit", type=int, default=50,
+                          help="Maximum results to return (default: 50)")
+    sp_skill_find.add_argument("--json", action="store_true",
+                          help="Output results as JSON")
+    sp_skill_find.add_argument("-p", "--profile", default=None,
+                          help="Connection profile")
+    sp_skill_find.add_argument("--env", default=None,
+                          help="Explicit .env file path (highest priority)")
+
+    sp_skill_info = subparsers.add_parser(
+        "skill-info",
+        help="Get More Info documentation for a SKILL function",
+        description=(
+            "Retrieves the More Info documentation for a specific SKILL function.\n"
+            "The More Info system provides detailed HTML documentation for Cadence\n"
+            "SKILL functions, indexed in ``doc/api_more_info/api_more_info.tgf``."
+        ),
+    )
+    sp_skill_info.add_argument("func_name", help="SKILL function name to look up")
+    sp_skill_info.add_argument(
+        "--json", action="store_true", help="Output results as JSON"
+    )
+    sp_skill_info.add_argument("-p", "--profile", default=None, help="Connection profile")
+    sp_skill_info.add_argument("--env", default=None, help="Explicit .env file path (highest priority)")
+
     sp_windows = subparsers.add_parser("windows", help="List all open Virtuoso windows")
     sp_windows.add_argument("-p", "--profile", default=None,
                             help="Connection profile")
@@ -1347,6 +1458,16 @@ def main(argv: list[str] | None = None) -> int:
         "windows": cli_windows,
         "snapshot": cli_snapshot,
         "export-visio": cli_export_visio,
+        "skill-find": lambda: cli_find(
+            query=getattr(args, "query", None),
+            mode=getattr(args, "mode", "fuzzy"),
+            limit=getattr(args, "limit", 50),
+            json_output=getattr(args, "json_output", False),
+        ),
+        "skill-info": lambda: cli_skill_info(
+            func_name=getattr(args, "func_name", None) or "",
+            json_output=getattr(args, "json", False),
+        ),
     }
     screenshot_target = getattr(args, "target", None)
     if screenshot_target is not None:

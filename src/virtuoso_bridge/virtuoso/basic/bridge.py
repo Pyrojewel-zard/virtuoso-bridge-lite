@@ -759,6 +759,365 @@ let((result winName ciwNum)
             execution_time=time.perf_counter() - started,
         )
 
+    # -- SKILL Finder -------------------------------------------------------
+
+    def find_skill(
+        self,
+        query: str,
+        *,
+        mode: str = "fuzzy",
+        limit: int = 50,
+        source_dir: str | Path | None = None,
+        cache_dir: str | Path | None = None,
+    ) -> list[dict]:
+        """Search SKILL API documentation by name.
+
+        On first call (or when *source_dir* is not provided), discovers
+        the SKILL Finder directory on the remote server by walking up from
+        the ``virtuoso`` binary to ``doc/finder/SKILL``.  The directory is
+        cached locally in *cache_dir* (default:
+        ``~/.cache/virtuoso_bridge/skill_finder/<host>/``) so subsequent
+        calls are fast without additional network traffic.
+
+        Parameters
+        ----------
+        query : str
+            Search string (function name, or substring/prefix/suffix/regex
+            depending on *mode*).
+        mode : str
+            Search mode — one of:
+
+            - ``fuzzy`` (default) — case-insensitive substring match
+            - ``prefix`` — name starts with *query*
+            - ``suffix`` — name ends with *query*
+            - ``exact`` — exact name match
+            - ``regex`` — Python regular expression match
+
+        limit : int
+            Maximum results to return (default 50).
+        source_dir : str | Path | None
+            Override the SKILL Finder source directory.  If None, the
+            directory is auto-discovered on the remote server.
+        cache_dir : str | Path | None
+            Local cache directory for downloaded .fnd files.  If None,
+            defaults to ``~/.cache/virtuoso_bridge/skill_finder/<host>/``.
+
+        Returns
+        -------
+        list[dict]
+            List of matching entries, each a dict with keys:
+            ``name``, ``syntax``, ``description``, ``source_file``.
+        """
+        from pathlib import Path as _Path
+        from virtuoso_bridge.virtuoso.skill_finder import (
+            SKILLFinder,
+            SearchMode,
+        )
+
+        # Resolve cache directory
+        if cache_dir:
+            cache_path = _Path(cache_dir).expanduser().resolve()
+        else:
+            cache_root = _Path.home() / ".cache" / "virtuoso_bridge" / "skill_finder"
+            host = getattr(self._tunnel, "_host", None) if self._tunnel else "local"
+            cache_path = cache_root / (host or "local")
+
+        # Discover SKILL Finder root
+        if source_dir:
+            finder_root = _Path(source_dir)
+            doc_root = finder_root.parent.parent
+        elif self._tunnel is not None:
+            runner = self.ssh_runner
+            if runner is None:
+                logger.warning("find_skill: no SSH runner available")
+                return []
+            profile = getattr(self._tunnel, "_profile", None) if self._tunnel else None
+            finder = SKILLFinder()
+            finder_root = finder.discover(remote_runner=runner, profile=profile)
+            if finder_root is None:
+                logger.warning(
+                    "find_skill: could not locate doc/finder/SKILL on %s",
+                    getattr(self._tunnel, "_host", "remote"),
+                )
+                return []
+            # Download .fnd files if cache is stale
+            cache_marker = cache_path / ".source_dir"
+            needs_download = True
+            if cache_path.exists() and cache_marker.exists():
+                cached = cache_marker.read_text().strip()
+                needs_download = cached != str(finder_root)
+            if needs_download:
+                import shutil
+                # Clear stale cache
+                if cache_path.exists():
+                    shutil.rmtree(cache_path)
+                cache_path.mkdir(parents=True, exist_ok=True)
+                logger.info(
+                    "find_skill: downloading SKILL Finder from %s", finder_root
+                )
+                try:
+                    result = runner.download(
+                        str(finder_root),
+                        cache_path,
+                        recursive=True,
+                        timeout=120,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(
+                            "find_skill: download failed — %s",
+                            result.stderr.strip(),
+                        )
+                        return []
+                    cache_marker.write_text(str(finder_root))
+                except Exception as exc:
+                    logger.warning("find_skill: download error — %s", exc)
+                    return []
+            finder_root = cache_path
+            # Also store the doc root (parent of doc/finder/SKILL) for More Info use
+            doc_root = finder_root.parent.parent
+            doc_root_marker = cache_path / ".doc_root"
+            if not doc_root_marker.exists() or doc_root_marker.read_text().strip() != str(doc_root):
+                doc_root_marker.write_text(str(doc_root))
+        else:
+            # Local mode
+            finder = SKILLFinder()
+            finder_root = finder.discover(remote_runner=None)
+            if finder_root is None:
+                logger.warning("find_skill: could not locate SKILL Finder locally")
+                return []
+            doc_root = finder_root.parent.parent
+
+        # Parse and search
+        finder = SKILLFinder()
+        finder.source_dir = finder_root
+        try:
+            finder.load(finder_root)
+        except Exception as exc:
+            logger.warning("find_skill: failed to load .fnd files — %s", exc)
+            return []
+
+        results = finder.search(query, mode=mode, limit=limit)
+        return [e.to_dict() for e in results]
+
+
+    def get_skill_more_info(
+        self,
+        func_name: str,
+        *,
+        source_dir: str | Path | None = None,
+        cache_dir: str | Path | None = None,
+    ) -> dict | None:
+        """Get More Info documentation for a specific SKILL function.
+
+        The More Info system consists of a ``api_more_info.tgf`` index
+        and associated HTML files containing detailed function documentation.
+
+        On first call, the index and referenced HTML files are downloaded
+        to a local cache.  Subsequent calls use the cache.
+
+        Parameters
+        ----------
+        func_name : str
+            Name of the SKILL function to look up.
+        source_dir : str | Path | None
+            Override the doc root directory (parent of ``api_more_info/``).
+            If None, auto-discovered from the virtuoso binary.
+        cache_dir : str | Path | None
+            Local cache directory.  If None, defaults to
+            ``~/.cache/virtuoso_bridge/skill_finder/<host>/``.
+
+        Returns
+        -------
+        dict or None
+            Dict with keys: ``func_name``, ``file_path``, ``topic``,
+            ``raw_html``, ``plain_text``.  Returns None if the function
+            has no More Info entry.
+        """
+        from pathlib import Path as _Path
+        from virtuoso_bridge.virtuoso.skill_finder import SKILLFinder
+        from virtuoso_bridge.virtuoso.skill_finder.more_info import (
+            html_to_plain_text,
+            parse_tgf_index,
+            resolve_doc_path,
+        )
+
+        if cache_dir:
+            cache_path = _Path(cache_dir).expanduser().resolve()
+        else:
+            cache_root = _Path.home() / ".cache" / "virtuoso_bridge" / "skill_finder"
+            host = getattr(self._tunnel, "_host", None) if self._tunnel else "local"
+            cache_path = cache_root / (host or "local")
+
+        # Determine doc root
+        if source_dir:
+            doc_root = _Path(source_dir)
+        elif self._tunnel is not None:
+            runner = self.ssh_runner
+            if runner is None:
+                logger.warning("get_skill_more_info: no SSH runner available")
+                return None
+            profile = getattr(self._tunnel, "_profile", None) if self._tunnel else None
+            finder = SKILLFinder()
+            finder_root = finder.discover(remote_runner=runner, profile=profile)
+            if finder_root is None:
+                logger.warning(
+                    "get_skill_more_info: could not locate doc/finder/SKILL on %s",
+                    getattr(self._tunnel, "_host", "remote"),
+                )
+                return None
+            doc_root = finder_root.parent.parent
+        else:
+            finder = SKILLFinder()
+            finder_root = finder.discover(remote_runner=None)
+            if finder_root is None:
+                logger.warning("get_skill_more_info: could not locate SKILL Finder locally")
+                return None
+            doc_root = finder_root.parent.parent
+
+        # More Info cache subdirectory
+        mi_cache = cache_path / "more_info"
+        mi_cache.mkdir(parents=True, exist_ok=True)
+        tgf_marker = mi_cache / ".source_dir"
+
+        # Remote: download .tgf and needed HTML files
+        if self._tunnel is not None:
+            runner = self.ssh_runner
+            tgf_remote_path = str(doc_root / "api_more_info" / "api_more_info.tgf")
+            tgf_local_path = mi_cache / "api_more_info.tgf"
+
+            needs_download = (
+                not tgf_local_path.exists()
+                or tgf_marker.exists()
+                and tgf_marker.read_text().strip() != tgf_remote_path
+            )
+
+            if needs_download:
+                logger.info(
+                    "get_skill_more_info: downloading .tgf index from %s", tgf_remote_path
+                )
+                try:
+                    # Download just the .tgf file first
+                    result = runner.download(
+                        tgf_remote_path,
+                        mi_cache,
+                        recursive=False,
+                        timeout=30,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(
+                            "get_skill_more_info: .tgf download failed — %s",
+                            result.stderr.strip(),
+                        )
+                        return None
+                    tgf_marker.write_text(tgf_remote_path)
+                except Exception as exc:
+                    logger.warning("get_skill_more_info: download error — %s", exc)
+                    return None
+
+            # Parse .tgf to find which HTML files are needed for this function
+            entries = parse_tgf_index(tgf_local_path)
+            key = func_name.lower()
+            entry = entries.get(key)
+            if entry is None:
+                return None
+
+            # Check if the referenced HTML file is cached
+            html_rel_path = entry.file_path.lstrip("$")  # e.g. "abstract/abstract_skill.html"
+            html_local_path = mi_cache / html_rel_path
+            html_remote_path = str(doc_root / html_rel_path)
+
+            if not html_local_path.exists():
+                logger.info(
+                    "get_skill_more_info: downloading %s", html_remote_path
+                )
+                try:
+                    html_local_path.parent.mkdir(parents=True, exist_ok=True)
+                    result = runner.download(
+                        html_remote_path,
+                        html_local_path,
+                        recursive=False,
+                        timeout=30,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(
+                            "get_skill_more_info: HTML download failed — %s",
+                            result.stderr.strip(),
+                        )
+                        return None
+                except Exception as exc:
+                    logger.warning(
+                        "get_skill_more_info: HTML download error — %s", exc
+                    )
+                    return None
+
+            # Extract the topic from HTML
+            try:
+                html_content = html_local_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return None
+
+            if entry.topic:
+                raw_html = None
+                # Try to extract specific topic
+                from virtuoso_bridge.virtuoso.skill_finder.more_info import (
+                    extract_topic_from_html,
+                )
+                raw_html = extract_topic_from_html(html_content, entry.topic)
+            else:
+                # Whole file is the More Info — no topic extraction needed
+                raw_html = html_content
+
+            if raw_html is None:
+                return None
+
+            plain_text = html_to_plain_text(raw_html)
+            return {
+                "func_name": entry.func_name,
+                "file_path": entry.file_path,
+                "topic": entry.topic,
+                "raw_html": raw_html,
+                "plain_text": plain_text,
+            }
+
+        else:
+            # Local mode
+            tgf_path = doc_root / "api_more_info" / "api_more_info.tgf"
+            entries = parse_tgf_index(tgf_path)
+            key = func_name.lower()
+            entry = entries.get(key)
+            if entry is None:
+                return None
+
+            html_path = resolve_doc_path(tgf_path, entry.file_path)
+            if not html_path.exists():
+                return None
+
+            try:
+                html_content = html_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return None
+
+            if entry.topic:
+                from virtuoso_bridge.virtuoso.skill_finder.more_info import (
+                    extract_topic_from_html,
+                )
+                raw_html = extract_topic_from_html(html_content, entry.topic)
+            else:
+                raw_html = html_content
+
+            if raw_html is None:
+                return None
+
+            plain_text = html_to_plain_text(raw_html)
+            return {
+                "func_name": entry.func_name,
+                "file_path": entry.file_path,
+                "topic": entry.topic,
+                "raw_html": raw_html,
+                "plain_text": plain_text,
+            }
+
+
     # -- IL loading ---------------------------------------------------------
 
     def load_il(self, path: str | Path, timeout: int | None = None) -> VirtuosoResult:
