@@ -1096,7 +1096,7 @@ let((result winName ciwNum)
             entries = parse_tgf_index(tgf_path)
             entry = entries.get(func_name.lower())
             if entry is None:
-                for suffix in ("_OCEAN", "_ViVA_SKILL"):
+                for suffix in ("_ocean", "_viva_skill"):
                     entry = entries.get(func_name.lower() + suffix)
                     if entry is not None:
                         break
