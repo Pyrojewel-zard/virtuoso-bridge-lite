@@ -65,13 +65,15 @@ virtuoso-bridge start
 
 **4. Load SKILL in Virtuoso CIW**
 
-`virtuoso-bridge start` deploys the SKILL bridge files to a per-user
-temp dir on the remote host and prints the exact `load(...)` line you
-need to paste into the CIW (the path includes your username, so it is
-collision-free across users on a shared machine):
+`virtuoso-bridge start` deploys the SKILL bridge files to a per-remote-user,
+per-local-client temp dir on the remote host and prints the exact `load(...)`
+line you need to paste into the CIW. The client segment defaults to the local
+account running bridge (for example `90590` on Windows) and can be overridden
+with `VB_CLIENT_ID` or `VB_CLIENT_ID_<profile>`, so it is collision-free across
+users and across local machines sharing the same remote scratch root:
 
 ```
-load("/tmp/virtuoso_bridge_<user>/virtuoso_bridge/virtuoso_setup.il")
+load("/tmp/virtuoso_bridge_<remote_user>/<client_id>/virtuoso_bridge/virtuoso_setup.il")
 ```
 
 (Run `virtuoso-bridge status` again at any time to re-print this line.
@@ -168,9 +170,8 @@ Your machine  ──SSH──►  Jump host (bastion)  ──SSH──►  Compu
 
 Same flow as remote, but with `VB_REMOTE_HOST=localhost` (or `127.0.0.1`):
 `virtuoso-bridge start` notices it's local, skips the SSH tunnel, and
-deploys the SKILL bridge files to `/tmp/virtuoso_bridge_<user>/`.  Paste
-the `load(...)` line it prints into your CIW once, then connect from
-Python:
+deploys the SKILL bridge files under the local bridge cache.  Paste the
+`load(...)` line it prints into your CIW once, then connect from Python:
 
 ```python
 from virtuoso_bridge import VirtuosoClient
@@ -256,11 +257,17 @@ M0 (VOUT VIN VSS VSS) nch_ulvt_mac l=30n w=1u nf=1
 
 ```bash
 virtuoso-bridge init [user@host] [-J user@jump] [--force]   # write ~/.virtuoso-bridge/.env
-virtuoso-bridge start           # start SSH tunnel + deploy daemon
+virtuoso-bridge start [--bind-venv]  # start SSH tunnel + deploy daemon
 virtuoso-bridge stop            # stop the SSH tunnel
 virtuoso-bridge restart         # force-restart
 virtuoso-bridge status          # check tunnel + Virtuoso daemon + Spectre
 virtuoso-bridge license         # check Spectre license availability
+virtuoso-bridge profile show    # print resolved profile, source, and venv binding path
+virtuoso-bridge profile bind PROFILE --venv  # pin active venv to PROFILE
+virtuoso-bridge profile clear --venv         # remove active venv's profile binding
+virtuoso-bridge load FILE.il    # run a .il file in Virtuoso (uploads in SSH mode)
+virtuoso-bridge eval 'EXPR'     # run inline SKILL expression
+virtuoso-bridge eval --stdin    # multi-line SKILL via stdin (auto-wrapped in progn)
 virtuoso-bridge windows         # list all open Virtuoso windows + focused session
 virtuoso-bridge snapshot        # focused maestro: 4 SKILL probe sections to stdout
 virtuoso-bridge snapshot -o ROOT  # full disk dump (raw + filtered XMLs + per-point run files)
@@ -270,6 +277,8 @@ virtuoso-bridge export-visio LIB CELL -o out.vsdx  # Windows + Visio/pywin32 sch
                                                    #   --stencil PATH            override circuit.vss location
 virtuoso-bridge screenshot      # screenshot CIW (or: current, N)
 virtuoso-bridge dismiss-dialog  # dismiss blocking GUI dialogs via X11
+virtuoso-bridge skill-find <query>  # search SKILL functions by name (fuzzy/prefix/suffix/exact/regex)
+virtuoso-bridge skill-info <fn>  # get detailed More Info docs for a SKILL function
 ```
 
 ## Build
@@ -327,6 +336,7 @@ When working on a task, check this table to find relevant skills and references.
 | Domain | Skill | Entry point | Key references |
 |---|---|---|---|
 | **Virtuoso / SKILL** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/layout-skill-api.md`, `references/schematic-skill-api.md`, `references/maestro-skill-api.md`, `references/troubleshooting.md` |
+| **SKILL Finder** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/skill-finder-python-api.md` |
 | **Layout** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/layout-python-api.md`, `references/layout-skill-api.md` |
 | **Schematic** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/schematic-python-api.md`, `references/schematic-skill-api.md`, `references/schematic-recreation.md` |
 | **Maestro / ADE** | `virtuoso` | `skills/virtuoso/SKILL.md` | `references/maestro-python-api.md`, `references/maestro-skill-api.md`, `references/simulation-flow.md` |

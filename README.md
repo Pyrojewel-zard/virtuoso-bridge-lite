@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/stargazers"><img src="https://img.shields.io/github/stars/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=f5c542&logo=github&v=20260511" alt="GitHub stars"/></a>
+  <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/stargazers"><img src="https://img.shields.io/github/stars/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=f5c542&logo=github&v=20260523" alt="GitHub stars"/></a>
   <a href="https://github.com/Arcadia-1/virtuoso-bridge-lite/network/members"><img src="https://img.shields.io/github/forks/Arcadia-1/virtuoso-bridge-lite?style=flat-square&color=f5c542" alt="GitHub forks"/></a>
   <a href="stats/README.md"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FArcadia-1%2Fvirtuoso-bridge-lite%2Fmain%2Fstats%2Fclones-badge.json&style=flat-square&v=2" alt="Clones"/></a>
   <a href="stats/README.md"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FArcadia-1%2Fvirtuoso-bridge-lite%2Fmain%2Fstats%2Fviews-badge.json&style=flat-square&v=2" alt="Views"/></a>
@@ -57,6 +57,10 @@ Spectre.
 ## Quick Start
 
 ```bash
+# 0. Get the source
+git clone https://github.com/Arcadia-1/virtuoso-bridge-lite.git
+cd virtuoso-bridge-lite
+
 # 1. Install in a virtual environment
 uv venv .venv
 source .venv/bin/activate
@@ -70,6 +74,9 @@ virtuoso-bridge init user@host [-J user@jump-host]
 virtuoso-bridge start          # starts tunnel and prints the CIW load(...) line
 virtuoso-bridge status         # tunnel + Virtuoso daemon + Spectre availability
 ```
+
+On Windows PowerShell, replace the activation line with
+`.\.venv\Scripts\Activate.ps1`.
 
 ```python
 from virtuoso_bridge import VirtuosoClient
@@ -113,11 +120,15 @@ All commands take `-p PROFILE` / `--env PATH` to pick a non-default config; run 
 |---|---|
 | **Tunnel / lifecycle** | |
 | `init [user@host] [-J jump]` | Write a starter `.env` (no args = empty template) |
-| `start` | Start SSH tunnel + deploy daemon |
+| `start [--bind-venv]` | Start SSH tunnel + deploy daemon; `--bind-venv` (with `-p X`) also binds the active virtualenv to profile `X` |
 | `stop` | Stop the SSH tunnel |
 | `restart` | Restart tunnel + daemon |
 | `status` | Tunnel + daemon health + Spectre availability |
 | `license` | Check Spectre license availability |
+| **Profile binding** | |
+| `profile show` | Print the resolved profile, its source, and the active venv binding path |
+| `profile bind PROFILE --venv` | Pin the active virtualenv to `PROFILE` (naked `from_env()` calls in that venv resolve to it) |
+| `profile clear --venv` | Remove the venv binding |
 | **SKILL execution** | |
 | `load FILE.il` | Run a `.il` file in Virtuoso (uploads it in SSH mode). VS Code task–friendly; outputs `VirtuosoResult` JSON |
 | `eval 'EXPR'` / `eval --stdin` | Run an inline SKILL expression; supports multi-statement via auto-wrapped `progn(...)` |
@@ -128,6 +139,9 @@ All commands take `-p PROFILE` / `--env PATH` to pick a non-default config; run 
 | `snapshot [-o DIR] [--history H]` | Dump the focused Virtuoso window (maestro/schematic/...) — brief by default, full disk dump with `-o` |
 | **Export** | |
 | `export-visio LIB CELL -o OUT.vsdx` | Render a Virtuoso schematic to Microsoft Visio (Windows + pywin32) |
+| **SKILL Finder** | |
+| `skill-find <query>` | Search SKILL functions by name (fuzzy/prefix/suffix/exact/regex) |
+| `skill-info <fn>` | Get detailed More Info docs for a SKILL function |
 
 ## Snapshot a maestro run
 
