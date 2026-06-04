@@ -149,7 +149,9 @@
 
     <h3>Step-by-step setup</h3>
     <pre><code><span class="cmt"># 1. Install</span>
-<span class="cmd">pip install -e .</span>
+<span class="cmd">uv venv .venv</span>
+<span class="cmd">source .venv/bin/activate</span>
+<span class="cmd">uv pip install -e .</span>
 
 <span class="cmt"># 2. Generate config (fills host/user/jump + port in one shot)</span>
 <span class="cmd">virtuoso-bridge init</span> user@host <span class="cmd">-J</span> user@jump-host
@@ -165,7 +167,7 @@
 <span class="cmd">virtuoso-bridge start</span>
 
 <span class="cmt"># 5. Load SKILL in Virtuoso CIW (path printed by `virtuoso-bridge start`)</span>
-<span class="cmt"># load("/tmp/virtuoso_bridge_&lt;user&gt;/virtuoso_bridge/virtuoso_setup.il")</span>
+<span class="cmt"># load("/tmp/virtuoso_bridge_&lt;remote_user&gt;/&lt;client_id&gt;/virtuoso_bridge/virtuoso_setup.il")</span>
 
 <span class="cmt"># 6. Verify</span>
 <span class="cmd">virtuoso-bridge status</span></code></pre>

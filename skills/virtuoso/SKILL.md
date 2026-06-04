@@ -68,7 +68,7 @@ All `virtuoso-bridge` CLI commands and Python scripts must run inside the activa
 
 ### Connection sequence (follow in order)
 
-1. **Check `.env`** — the bridge looks up `.env` in this order: `--env FILE` (CLI flag) → `./.env` (project-local) → `~/.virtuoso-bridge/.env` (user-level). If **any** of these exists, skip `init`. Only run **`virtuoso-bridge init`** when none exist — it creates `~/.virtuoso-bridge/.env` (user-level, shared across projects). If the user already told you their SSH target, prefer `virtuoso-bridge init user@host [-J user@jump]` to fill host/user/jump + port in one step; otherwise plain `virtuoso-bridge init` writes an empty template for them to edit.
+1. **Check `.env`** — the bridge looks up `.env` in this order: `--env FILE` (CLI flag) → first parent `.env` that looks like a Virtuoso Bridge config (`VB_REMOTE_HOST` or `VB_LOCAL_PORT`) → `~/.virtuoso-bridge/.env` (user-level). If **any** of these exists, skip `init`. Only run **`virtuoso-bridge init`** when none exist — it creates `~/.virtuoso-bridge/.env` (user-level, shared across projects). If the user already told you their SSH target, prefer `virtuoso-bridge init user@host [-J user@jump]` to fill host/user/jump + port in one step; otherwise plain `virtuoso-bridge init` writes an empty template for them to edit.
 2. **`virtuoso-bridge start`** — starts the local bridge service and SSH tunnel.
 3. **If status is `degraded`** — the user must load the setup script in Virtuoso CIW (the `start` output tells them exactly what to run).
 4. **`virtuoso-bridge status`** — verify everything is `healthy` before proceeding.
@@ -228,10 +228,14 @@ Load on demand — each contains detailed API docs and edge-case guidance:
 - `01b_create_rc_load_skill.py` — create RC schematic via .il script
 - `02_read_connectivity.py` — read instance connections and nets
 - `03_read_instance_params.py` — read CDF instance parameters
+- `04_test_set_instance_params_analoglib.py` — update analogLib instance parameters
 - `05_rename_instance.py` — rename schematic instances
 - `06_delete_instance.py` — delete instances
 - `07_delete_cell.py` — delete cells from library
 - `08_import_cdl_cap_array.py` — import CDL netlist via spiceIn (SSH)
+- `09_create_pins.py` — create schematic pins
+- `10_create_wire.py` — draw wires between pins
+- `11_read_schematic_unified.py` — read instances, nets, pins, geometry, and parameters
 
 ### `examples/01_virtuoso/layout/`
 - `01_create_layout.py` — create layout with rects, paths, instances
