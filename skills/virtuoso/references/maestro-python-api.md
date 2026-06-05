@@ -115,7 +115,7 @@ Adds the full disk dump on top of the same dict.  Layout:
 
 The dict gains an ``output_dir`` field with the snapshot directory path.
 
-Filtered XMLs use ``src/virtuoso_bridge/resources/snapshot_filter.yaml``
+Filtered XMLs use ``src/virtuoso_bridge/virtuoso/maestro/snapshot_filter.yaml``
 as the keep-list; edit that file to change which `<active>` children
 or `<Test>` components are retained.
 

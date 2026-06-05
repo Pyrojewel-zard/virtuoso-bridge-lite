@@ -68,12 +68,12 @@ All `virtuoso-bridge` CLI commands and Python scripts must run inside the activa
 
 ### Connection sequence (follow in order)
 
-1. **Check `.env`** — the bridge looks up `.env` in this order: `--env FILE` (CLI flag) → `./.env` (project-local) → `~/.virtuoso-bridge/.env` (user-level). If **any** of these exists, skip `init`. Only run **`virtuoso-bridge init`** when none exist — it creates `~/.virtuoso-bridge/.env` (user-level, shared across projects). If the user already told you their SSH target, prefer `virtuoso-bridge init user@host [-J user@jump]` to fill host/user/jump + port in one step; otherwise plain `virtuoso-bridge init` writes an empty template for them to edit.
+1. **Check `.env`** — the bridge looks up `.env` in this order: `--env FILE` (CLI flag) → first parent `.env` that looks like a Virtuoso Bridge config (`VB_REMOTE_HOST` or `VB_LOCAL_PORT`) → `~/.virtuoso-bridge/.env` (user-level). If **any** of these exists, skip `init`. Only run **`virtuoso-bridge init`** when none exist — it creates `~/.virtuoso-bridge/.env` (user-level, shared across projects). If the user already told you their SSH target, prefer `virtuoso-bridge init user@host [-J user@jump]` to fill host/user/jump + port in one step; otherwise plain `virtuoso-bridge init` writes an empty template for them to edit.
 2. **`virtuoso-bridge start`** — starts the local bridge service and SSH tunnel.
 3. **If status is `degraded`** — the user must load the setup script in Virtuoso CIW (the `start` output tells them exactly what to run).
 4. **`virtuoso-bridge status`** — verify everything is `healthy` before proceeding.
 5. **`virtuoso-bridge windows`** — list all open Virtuoso windows (num + name).
-6. **`virtuoso-bridge screenshot [ciw|current|N]`** — screenshot a window to `output/`. Default: CIW.
+6. **`virtuoso-bridge screenshot [ciw|current|N] [-o DIR|FILE]`** — screenshot a window. Default target is CIW; default output is the user artifact screenshots directory.
 7. **`virtuoso-bridge snapshot -o <dir>`** — dump the currently-focused maestro window to `<dir>/<YYYYMMDD_HHMMSS>__<lib>__<cell>/` (state XMLs, SKILL probe output, per-point netlist + PSF results, `.rdb`). This is the default way to capture Maestro state — no Python required. Use the Python API (below) only inside a multi-step pipeline.
 
 ### Then
@@ -96,7 +96,8 @@ client.download_file(remote_path, local_path)    # remote → local
 client.open_window(lib, cell, view="layout")     # open GUI window
 client.run_shell_command("ls /tmp/")             # run shell on remote
 client.list_windows()                            # list all open windows
-client.screenshot(output="output", target="ciw") # screenshot a window
+client.screenshot(target="ciw")                   # screenshot to the user artifact directory
+client.screenshot(output="output", target="ciw")  # explicit repo-local output
 ```
 
 ### Batch attribute fetch: `fetch()` / `fetch_one()`
@@ -228,10 +229,14 @@ Load on demand — each contains detailed API docs and edge-case guidance:
 - `01b_create_rc_load_skill.py` — create RC schematic via .il script
 - `02_read_connectivity.py` — read instance connections and nets
 - `03_read_instance_params.py` — read CDF instance parameters
+- `04_test_set_instance_params_analoglib.py` — update analogLib instance parameters
 - `05_rename_instance.py` — rename schematic instances
 - `06_delete_instance.py` — delete instances
 - `07_delete_cell.py` — delete cells from library
 - `08_import_cdl_cap_array.py` — import CDL netlist via spiceIn (SSH)
+- `09_create_pins.py` — create schematic pins
+- `10_create_wire.py` — draw wires between pins
+- `11_read_schematic_unified.py` — read instances, nets, pins, geometry, and parameters
 
 ### `examples/01_virtuoso/layout/`
 - `01_create_layout.py` — create layout with rects, paths, instances
@@ -591,6 +596,7 @@ When `execute_skill()` times out, possible causes:
 | Cause | Symptom | Fix |
 |-------|---------|-----|
 | **Modal dialog** | GUI popup blocking CIW | `virtuoso-bridge dismiss-dialog` |
+| **Auto dialog finder missed a modal** | GUI popup visible, SKILL channel blocked | `virtuoso-bridge list-windows --json`, then `virtuoso-bridge dismiss-window WINDOW_ID --action enter` |
 | **Long operation** | Simulation or netlist running | Wait, or use `?waitUntilDone nil` |
 | **CIW input prompt** | CIW waiting for typed input | `dismiss-dialog` (sends Enter) |
 | **Bridge disconnected** | All calls fail immediately | `virtuoso-bridge restart` |
@@ -601,11 +607,15 @@ When `execute_skill()` times out, possible causes:
 # Find and dismiss all blocking Virtuoso dialogs
 virtuoso-bridge dismiss-dialog
 
+# Inspect X11 windows and dismiss one explicitly
+virtuoso-bridge list-windows --json
+virtuoso-bridge dismiss-window 0x4203583 --action enter
+
 # From Python
 client.dismiss_dialog()
 ```
 
-Uses `xwininfo` to find virtuoso-owned dialog windows and `XTestFakeKeyEvent` to send Enter. Works even when the SKILL channel is completely stuck.
+Uses `xwininfo` to find virtuoso-owned dialog windows and `XTestFakeKeyEvent` to send the requested key action. Works even when the SKILL channel is completely stuck.
 
 **Prevention:** Always `dbSave(cv)` before `hiCloseWindow(win)`. Never use `?waitUntilDone t` in simulation calls. Add dialog-recovery in simulation loops (see "Run a simulation" section).
 

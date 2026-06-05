@@ -872,6 +872,65 @@ def cli_dismiss_dialog() -> int:
     return 0
 
 
+def cli_list_windows(*, json_output: bool = False) -> int:
+    """List Virtuoso-related X11 windows without dismissing anything."""
+    import json
+
+    if json_output:
+        load_vb_env()
+    else:
+        _load_cli_env()
+    from virtuoso_bridge.virtuoso import x11
+    runner, user = _make_ssh_runner()
+
+    windows = x11.list_windows(runner, user, profile=_get_cli_profile())
+    if json_output:
+        print(json.dumps(windows, indent=2, ensure_ascii=False, default=str))
+        return 0
+    if not windows:
+        print("No Virtuoso X11 windows found.")
+        return 0
+    for w in windows:
+        geo = w.get("geometry") or {}
+        title = w.get("title") or "(untitled)"
+        print(
+            f"{w.get('dismiss_id') or w.get('window_id')} "
+            f"[{w.get('kind', 'window')}] {title} "
+            f"{geo.get('w', 0)}x{geo.get('h', 0)}+{geo.get('x', 0)}+{geo.get('y', 0)} "
+            f"action={w.get('suggested_action') or '-'}"
+        )
+    return 0
+
+
+def cli_dismiss_window(*, window_id: str, action: str = "enter") -> int:
+    """Dismiss one explicit X11 window id via XTest."""
+    _load_cli_env()
+    from virtuoso_bridge.virtuoso import x11
+    runner, user = _make_ssh_runner()
+
+    results = x11.dismiss_window(
+        runner,
+        user,
+        window_id,
+        action=action,
+        profile=_get_cli_profile(),
+    )
+    if not results:
+        print("No result returned.")
+        return 1
+    ok = True
+    for result in results:
+        if "error" in result:
+            ok = False
+            print(f"  Error: {result['error']}")
+        else:
+            print(
+                f"  Dismissed: {result.get('dismissed', window_id)} "
+                f"action={result.get('action', action)}"
+            )
+    return 0 if ok else 1
+
+
 
 _SCREENSHOT_TARGET: list[str] = ["ciw"]
 
@@ -1178,11 +1237,9 @@ def cli_screenshot() -> int:
     else:
         target = raw_target
 
-    from pathlib import Path
-    output_dir = Path("output")
-    output_dir.mkdir(exist_ok=True)
+    output = _SCREENSHOT_OUTPUT[0]
 
-    result = client.screenshot(output=output_dir, target=target)
+    result = client.screenshot(output=output, target=target)
     if result.status.value != "success":
         print(f"Error: {result.errors[0] if result.errors else 'screenshot failed'}")
         return 1
@@ -1306,11 +1363,36 @@ def build_parser() -> argparse.ArgumentParser:
     sp_dismiss.add_argument("--env", default=None,
                             help="Explicit .env file path (highest priority)")
 
+    sp_list_windows = subparsers.add_parser(
+        "list-windows", help="List Virtuoso-related X11 windows")
+    sp_list_windows.add_argument("--json", action="store_true",
+                                 help="Output a JSON array")
+    sp_list_windows.add_argument("-p", "--profile", default=None,
+                                 help="Connection profile")
+    sp_list_windows.add_argument("--env", default=None,
+                                 help="Explicit .env file path (highest priority)")
+
+    sp_dismiss_window = subparsers.add_parser(
+        "dismiss-window", help="Dismiss one explicit X11 window id")
+    sp_dismiss_window.add_argument("window_id", help="X11 window id, e.g. 0x4203583")
+    sp_dismiss_window.add_argument(
+        "--action",
+        default="enter",
+        choices=["enter", "escape", "alt-y", "alt-n"],
+        help="Key action to send (default: enter)",
+    )
+    sp_dismiss_window.add_argument("-p", "--profile", default=None,
+                                   help="Connection profile")
+    sp_dismiss_window.add_argument("--env", default=None,
+                                   help="Explicit .env file path (highest priority)")
+
     sp_screenshot = subparsers.add_parser(
         "screenshot", help="Take a screenshot of a Virtuoso window")
     sp_screenshot.add_argument(
         "target", nargs="?", default="ciw",
         help="ciw (default), current, a view name (schematic/layout/maestro), or window number")
+    sp_screenshot.add_argument("-o", "--output", default=None,
+                               help="Output file or directory (default: user artifact screenshots dir)")
     sp_screenshot.add_argument("-p", "--profile", default=None,
                                help="Connection profile")
     sp_screenshot.add_argument("--env", default=None,
@@ -1321,8 +1403,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search SKILL API documentation from Cadence .fnd files",
         description=(
             "Queries the Cadence SKILL Finder database (``doc/finder/SKILL/*.fnd``)"
-            " on the remote server.  On first run the database is downloaded to a local\n"
-            "cache (``~/.cache/virtuoso_bridge/skill_finder/<host>/``);\n"
+            " on the remote server.  On first run the database is downloaded to the\n"
+            "user cache directory under ``skill_finder/<host>``;\n"
             "subsequent runs use the cache without additional network traffic.\n\n"
             "Search modes:\n"
             "  fuzzy   case-insensitive substring match (default)\n"
@@ -1489,6 +1571,13 @@ def main(argv: list[str] | None = None) -> int:
             quiet=getattr(args, "quiet", False),
         ),
         "dismiss-dialog": cli_dismiss_dialog,
+        "list-windows": lambda: cli_list_windows(
+            json_output=getattr(args, "json", False),
+        ),
+        "dismiss-window": lambda: cli_dismiss_window(
+            window_id=getattr(args, "window_id"),
+            action=getattr(args, "action", "enter"),
+        ),
         "screenshot": cli_screenshot,
         "windows": cli_windows,
         "snapshot": cli_snapshot,
@@ -1508,6 +1597,9 @@ def main(argv: list[str] | None = None) -> int:
     screenshot_target = getattr(args, "target", None)
     if screenshot_target is not None:
         _SCREENSHOT_TARGET[0] = screenshot_target
+    screenshot_output = getattr(args, "output", None)
+    if screenshot_output is not None:
+        _SCREENSHOT_OUTPUT[0] = screenshot_output
     if args.command == "snapshot":
         for k in _SNAPSHOT_OPTS:
             v = getattr(args, k, None)
@@ -1523,6 +1615,7 @@ def main(argv: list[str] | None = None) -> int:
 
 # Global profile for CLI commands (avoids changing all function signatures)
 _CLI_PROFILE: list[str | None] = [None]
+_SCREENSHOT_OUTPUT: list[str | None] = [None]
 
 
 def _get_cli_profile() -> str | None:

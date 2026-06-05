@@ -45,7 +45,7 @@ Re-running `init` on an existing `.env` is a no-op; pass `--force` to overwrite.
 
 **2. Edit `.env`** (only if step 1 did not already fill it in)
 
-> **Where to put `.env`:** By default the bridge checks `./.env` first, then `~/.virtuoso-bridge/.env`. For CLI commands such as `virtuoso-bridge start`, `--env FILE` has the highest priority.
+> **Where to put `.env`:** `--env FILE` has the highest priority. Without it, the bridge walks from the current directory upward and uses the first `.env` that looks like a Virtuoso Bridge config (`VB_REMOTE_HOST` or `VB_LOCAL_PORT`), then falls back to `~/.virtuoso-bridge/.env`.
 
 ```dotenv
 VB_REMOTE_HOST=my-server              # SSH host alias from ~/.ssh/config
@@ -154,7 +154,7 @@ Your machine  ──SSH──►  Jump host (bastion)  ──SSH──►  Compu
 `VB_REMOTE_HOST` must be the machine running Virtuoso, **not** the jump host. This is the most common misconfiguration.
 
 1. **Check `.env`** — does it exist and have `VB_REMOTE_HOST` set?
-   - If not: `pip install -e .` then ask the user for their SSH target. If they give `user@host` (plus optional jump), run `virtuoso-bridge init user@host [-J user@jump]` — it fills everything in one shot. Otherwise run `virtuoso-bridge init` for an empty template and ask them to fill `VB_REMOTE_HOST`.
+   - If not: install in the project venv (`uv pip install -e .`) then ask the user for their SSH target. If they give `user@host` (plus optional jump), run `virtuoso-bridge init user@host [-J user@jump]` — it fills everything in one shot. Otherwise run `virtuoso-bridge init` for an empty template and ask them to fill `VB_REMOTE_HOST`.
    - Verify: `VB_REMOTE_HOST` = compute host (where Virtuoso runs), `VB_JUMP_HOST` = bastion (if any).
 
 2. **Check SSH** — `ssh <VB_REMOTE_HOST> echo ok` (or via jump host if configured)
@@ -174,7 +174,7 @@ Your machine  ──SSH──►  Jump host (bastion)  ──SSH──►  Compu
 
 Same flow as remote, but with `VB_REMOTE_HOST=localhost` (or `127.0.0.1`):
 `virtuoso-bridge start` notices it's local, skips the SSH tunnel, and
-deploys the SKILL bridge files under the local bridge cache.  Paste the
+deploys the SKILL bridge files under the local bridge state directory.  Paste the
 `load(...)` line it prints into your CIW once, then connect from Python:
 
 ```python
@@ -276,10 +276,10 @@ virtuoso-bridge windows         # list all open Virtuoso windows + focused sessi
 virtuoso-bridge snapshot        # focused maestro: 4 SKILL probe sections to stdout
 virtuoso-bridge snapshot -o ROOT  # full disk dump (raw + filtered XMLs + per-point run files)
 virtuoso-bridge export-visio LIB CELL -o out.vsdx  # Windows + Visio/pywin32 schematic export
-                                                   #   pip install -e .[visio]   to pull pywin32
+                                                   #   uv pip install -e .[visio]  to pull pywin32
                                                    #   --include-body-pins       to draw NMOS/PMOS bulk (B) nets
                                                    #   --stencil PATH            override circuit.vss location
-virtuoso-bridge screenshot      # screenshot CIW (or: current, N)
+virtuoso-bridge screenshot      # screenshot CIW to the user artifact directory
 virtuoso-bridge dismiss-dialog  # dismiss blocking GUI dialogs via X11
 virtuoso-bridge skill-find <query>  # search SKILL functions by name (fuzzy/prefix/suffix/exact/regex)
 virtuoso-bridge skill-info <fn>  # get detailed More Info docs for a SKILL function

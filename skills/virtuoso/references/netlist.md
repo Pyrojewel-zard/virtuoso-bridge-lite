@@ -132,7 +132,7 @@ Key points:
 
 ## Direct Schematic Read → Netlist
 
-The schematic database (instances, nets, terminals) can be read directly via SKILL and assembled into any netlist format without relying on external netlisters. See `examples/01_virtuoso/schematic/02_read_connectivity.py`.
+The schematic database (instances, nets, terminals) can be read directly via SKILL and assembled into any netlist format without relying on external netlisters. See `examples/01_virtuoso/schematic/11_read_schematic_unified.py` for the current full reader, or `examples/01_virtuoso/schematic/02_read_connectivity.py` for a topology-only connectivity example.
 
 Key SKILL accessors:
 - `cv~>instances` → all instances
@@ -184,6 +184,8 @@ Sample files in `references/netlist_samples/` — a 2-stage RC low-pass cascade 
 
 ## Examples
 
+- `examples/01_virtuoso/schematic/11_read_schematic_unified.py` — read instances, nets, pins, geometry, and parameters via SKILL
 - `examples/01_virtuoso/schematic/02_read_connectivity.py` — read schematic connectivity via SKILL
 - `examples/01_virtuoso/schematic/08_import_cdl_cap_array.py` — CDL → spiceIn import
-- `examples/01_virtuoso/maestro/04_rc_filter_sweep.py` — includes Spectre netlist export via maeCreateNetlistForCorner
+- `examples/01_virtuoso/maestro/06b_rc_simulate_and_read.py` — run a Maestro simulation and read/export results
+- `examples/01_virtuoso/maestro/09_export_sweep_subpoints.py` — export per-sweep-point waveforms
