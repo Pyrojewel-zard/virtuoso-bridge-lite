@@ -235,7 +235,8 @@ If `spectre` is already on PATH in the remote user's default shell (e.g., via `~
 
 ## Key conventions
 
-- All SKILL execution goes through `VirtuosoClient`. Never SSH and run SKILL manually.
+- SKILL execution goes through the bridge (`VirtuosoClient` in Python, or
+  `virtuoso-bridge eval/load` from the CLI). Never SSH and run SKILL manually.
 - Layout/schematic editing: `client.layout.edit()` / `client.schematic.edit()` context managers.
 - Spectre simulation: `SpectreSimulator.from_env()`. See "How Spectre is located" above.
 - `core/` is the minimal reference implementation (3 source files, ~285 lines). Use the installed package for real work.
@@ -273,14 +274,16 @@ virtuoso-bridge load FILE.il    # run a .il file in Virtuoso (uploads in SSH mod
 virtuoso-bridge eval 'EXPR'     # run inline SKILL expression
 virtuoso-bridge eval --stdin    # multi-line SKILL via stdin (auto-wrapped in progn)
 virtuoso-bridge windows         # list all open Virtuoso windows + focused session
-virtuoso-bridge snapshot        # focused maestro: 4 SKILL probe sections to stdout
-virtuoso-bridge snapshot -o ROOT  # full disk dump (raw + filtered XMLs + per-point run files)
+virtuoso-bridge snapshot        # brief summary of the focused Virtuoso window
+virtuoso-bridge snapshot -o ROOT  # full maestro disk dump (raw + filtered XMLs + per-point run files)
 virtuoso-bridge export-visio LIB CELL -o out.vsdx  # Windows + Visio/pywin32 schematic export
                                                    #   uv pip install -e .[visio]  to pull pywin32
                                                    #   --include-body-pins       to draw NMOS/PMOS bulk (B) nets
                                                    #   --stencil PATH            override circuit.vss location
 virtuoso-bridge screenshot      # screenshot CIW to the user artifact directory
 virtuoso-bridge dismiss-dialog  # dismiss blocking GUI dialogs via X11
+virtuoso-bridge list-windows --json  # list Virtuoso-related X11 windows
+virtuoso-bridge dismiss-window WINDOW_ID --action enter  # dismiss one explicit X11 window
 virtuoso-bridge skill-find <query>  # search SKILL functions by name (fuzzy/prefix/suffix/exact/regex)
 virtuoso-bridge skill-info <fn>  # get detailed More Info docs for a SKILL function
 ```
