@@ -30,7 +30,7 @@ def test_maestro_open_waveform_viewer_skill_plots_explicit_signals() -> None:
     assert 'awvPlotWaveform(vbWindowId vbWaveforms ?expr list("/IN" "/OUT"))' in skill
 
 
-def test_maestro_open_waveform_viewer_keeps_results_session_alive() -> None:
+def test_maestro_open_waveform_viewer_keeps_results_session_alive_on_success() -> None:
     skill = maestro_open_waveform_viewer_skill(
         "demoLib",
         "tb_inv",
@@ -39,8 +39,45 @@ def test_maestro_open_waveform_viewer_keeps_results_session_alive() -> None:
         results_dir="/tmp/psf/tran/psf",
     )
 
-    assert "maeCloseResults" not in skill
-    assert "maeCloseSession" not in skill
+    assert "vbOpenOk = t" in skill
+    assert 'list("opened" "demoLib" "tb_inv" "maestro" "Interactive.1" vbSession vbWindowId)' in skill
+    assert "unless(vbOpenOk" in skill
+
+
+def test_maestro_open_waveform_viewer_cleans_up_failed_open() -> None:
+    skill = maestro_open_waveform_viewer_skill(
+        "demoLib",
+        "tb_inv",
+        "Interactive.1",
+        signals=["/OUT"],
+        results_dir="/tmp/psf/tran/psf",
+    )
+
+    assert "vbOpenResult = errset(progn(" in skill
+    assert "unless(vbOpenOk" in skill
+    assert "hiCloseWindow(vbWindowId)" in skill
+    assert "maeCloseSession(?session vbSession ?forceClose t)" in skill
+    assert 'error("open waveform viewer failed")' in skill
+
+
+def test_maestro_open_waveform_viewer_escapes_string_inputs() -> None:
+    skill = maestro_open_waveform_viewer_skill(
+        'demo"Lib\\1',
+        'tb"inv\\2',
+        'Interactive."3\\4',
+        signals=['/A"NET\\1'],
+        test='tr"an\\5',
+        result='res"ult\\6',
+        results_dir='/tmp/a"b\\c',
+    )
+
+    assert 'demo\\"Lib\\\\1' in skill
+    assert 'tb\\"inv\\\\2' in skill
+    assert 'Interactive.\\"3\\\\4' in skill
+    assert '/A\\"NET\\\\1' in skill
+    assert 'tr\\"an\\\\5' in skill
+    assert 'res\\"ult\\\\6' in skill
+    assert '/tmp/a\\"b\\\\c' in skill
 
 
 def test_maestro_open_waveform_viewer_skill_can_fallback_to_maestro_outputs() -> None:
@@ -68,6 +105,15 @@ def test_maestro_close_waveform_viewer_skill_closes_window_and_session() -> None
     assert 'vbSession = "fnxSession2"' in skill
     assert "hiCloseWindow(vbWindow)" in skill
     assert "maeCloseSession(?session vbSession ?forceClose t)" in skill
+    assert "maeGetSessions()" in skill
+    assert "member(vbSession" in skill
+    assert 'error("close waveform session failed")' in skill
+
+
+def test_maestro_close_waveform_viewer_escapes_session() -> None:
+    skill = maestro_close_waveform_viewer_skill(session='fnx"Session\\2')
+
+    assert 'vbSession = "fnx\\"Session\\\\2"' in skill
 
 
 def test_maestro_close_waveform_viewer_accepts_window_object_text() -> None:
@@ -80,6 +126,11 @@ def test_maestro_close_waveform_viewer_accepts_window_object_text() -> None:
 def test_maestro_close_waveform_viewer_requires_target() -> None:
     with pytest.raises(ValueError, match="window or session must be provided"):
         maestro_close_waveform_viewer_skill()
+
+
+def test_maestro_close_waveform_viewer_rejects_blank_session() -> None:
+    with pytest.raises(ValueError, match="session must not be blank"):
+        maestro_close_waveform_viewer_skill(session="  ")
 
 
 def test_maestro_close_waveform_viewer_rejects_unsafe_window_ref() -> None:

@@ -100,11 +100,14 @@ def maestro_open_waveform_viewer_skill(
     return (
         "let((vbSession vbResultsOpenResult vbResultsOpen vbResultsDir vbRawResultsOpen "
         "vbWaveforms vbWaveform vbWaveResult vbTestName vbTestNamesResult vbTestNames "
-        "vbOutputResult vbWindowResult vbWindowId vbPlotResult) "
+        "vbOutputResult vbWindowResult vbWindowId vbPlotResult vbOpenResult vbOpenOk) "
+        "vbOpenOk = nil "
+        "vbOpenResult = errset(progn("
         "unless(and(isCallable('maeOpenSetup) isCallable('maeOpenResults) "
         "isCallable('maeGetResultTests) isCallable('maeGetOutputValue) "
         "isCallable('openResults) isCallable('awvCreatePlotWindow) "
-        "isCallable('awvPlotWaveform) isCallable('v)) "
+        "isCallable('awvPlotWaveform) isCallable('v) "
+        "isCallable('hiCloseWindow) isCallable('maeCloseSession)) "
         'error("waveform viewer API unavailable")) '
         f'vbSession = maeOpenSetup("{escaped_lib}" "{escaped_cell}" "{escaped_view}" '
         f'?application "{escaped_application}" ?mode "r") '
@@ -122,7 +125,13 @@ def maestro_open_waveform_viewer_skill(
         'unless(vbWindowId error("create waveform window failed")) '
         f"vbPlotResult = errset(awvPlotWaveform(vbWindowId vbWaveforms ?expr {signal_expr}) nil) "
         'unless(vbPlotResult && car(vbPlotResult) error("plot waveform failed")) '
-        f'list("opened" "{escaped_lib}" "{escaped_cell}" "{escaped_view}" "{escaped_history}" vbSession vbWindowId))'
+        "vbOpenOk = t "
+        f'list("opened" "{escaped_lib}" "{escaped_cell}" "{escaped_view}" "{escaped_history}" vbSession vbWindowId)) nil) '
+        "unless(vbOpenOk "
+        "when(vbWindowId errset(hiCloseWindow(vbWindowId) nil)) "
+        "when(vbSession errset(maeCloseSession(?session vbSession ?forceClose t) nil))) "
+        'unless(vbOpenResult error("open waveform viewer failed")) '
+        "car(vbOpenResult))"
     )
 
 
@@ -134,15 +143,32 @@ def maestro_close_waveform_viewer_skill(
     """Build SKILL to close a waveform window and its retained Maestro session."""
     if window is None and session is None:
         raise ValueError("window or session must be provided")
+    if session is not None:
+        session = session.strip()
+        if not session:
+            raise ValueError("session must not be blank")
 
     window_expr = _skill_window_ref(window) if window is not None else "nil"
     session_expr = f'"{escape_skill_string(session)}"' if session else "nil"
     return (
-        "let((vbWindow vbSession) "
+        "let((vbWindow vbSession vbWindowCloseResult vbSessionCloseResult "
+        "vbWindowsResult vbWindowsAfter vbSessionsResult vbSessionsAfter) "
         f"vbWindow = {window_expr} "
         f"vbSession = {session_expr} "
-        "when(vbWindow errset(hiCloseWindow(vbWindow) nil)) "
-        "when(vbSession errset(maeCloseSession(?session vbSession ?forceClose t) nil)) "
+        "when(vbWindow "
+        "vbWindowCloseResult = errset(hiCloseWindow(vbWindow) nil) "
+        'unless(vbWindowCloseResult error("close waveform window failed")) '
+        "vbWindowsResult = errset(hiGetWindowList() nil) "
+        'unless(vbWindowsResult error("check waveform window close failed")) '
+        "vbWindowsAfter = car(vbWindowsResult) "
+        'when(member(vbWindow vbWindowsAfter) error("close waveform window failed"))) '
+        "when(vbSession "
+        "vbSessionCloseResult = errset(maeCloseSession(?session vbSession ?forceClose t) nil) "
+        'unless(vbSessionCloseResult error("close waveform session failed")) '
+        "vbSessionsResult = errset(maeGetSessions() nil) "
+        'unless(vbSessionsResult error("check waveform session close failed")) '
+        "vbSessionsAfter = car(vbSessionsResult) "
+        'when(member(vbSession vbSessionsAfter) error("close waveform session failed"))) '
         'list("closed" vbSession vbWindow))'
     )
 
