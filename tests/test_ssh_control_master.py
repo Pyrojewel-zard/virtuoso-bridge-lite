@@ -84,6 +84,8 @@ def test_recursive_download_quotes_remote_path_components(monkeypatch, tmp_path)
             self.stderr = _Stderr()
 
         def communicate(self, timeout=None):
+            if self.cmd[0].endswith("tar"):
+                Path(self.cmd[4], "netlist dir").mkdir()
             return b"", b""
 
         def wait(self, timeout=None):
@@ -107,8 +109,10 @@ def test_recursive_download_quotes_remote_path_components(monkeypatch, tmp_path)
     remote_cmd = commands[0][-1]
     inner_cmd = shlex.split(remote_cmd)[2]
     assert f"p={shlex.quote(remote_path)}" in inner_cmd
-    assert 'cd "$p"' in inner_cmd
-    assert "tar czf - ." in inner_cmd
+    assert 'd=$(dirname "$p")' in inner_cmd
+    assert 'b=$(basename "$p")' in inner_cmd
+    assert 'cd "$d"' in inner_cmd
+    assert 'tar czf - "$b"' in inner_cmd
     assert commands[1][:4] == [runner._tar_cmd, "xzf", "-", "-C"]
     extract_dir = Path(commands[1][4])
     assert extract_dir.parent == tmp_path
@@ -139,7 +143,9 @@ def test_recursive_download_extracts_into_requested_directory(monkeypatch, tmp_p
 
         def communicate(self, timeout=None):
             if self.cmd[0].endswith("tar"):
-                Path(self.cmd[4], "input.scs").write_text("new netlist\n", encoding="utf-8")
+                extracted = Path(self.cmd[4], "netlist")
+                extracted.mkdir()
+                (extracted / "input.scs").write_text("new netlist\n", encoding="utf-8")
             return b"", b""
 
         def wait(self, timeout=None):
@@ -162,8 +168,8 @@ def test_recursive_download_extracts_into_requested_directory(monkeypatch, tmp_p
     assert result.returncode == 0
     remote_cmd = commands[0][-1]
     inner_cmd = shlex.split(remote_cmd)[2]
-    assert 'cd "$p"' in inner_cmd
-    assert "tar czf - ." in inner_cmd
+    assert 'cd "$d"' in inner_cmd
+    assert 'tar czf - "$b"' in inner_cmd
     assert commands[1][:4] == [runner._tar_cmd, "xzf", "-", "-C"]
     extract_dir = Path(commands[1][4])
     assert extract_dir.parent == tmp_path
@@ -236,7 +242,9 @@ def test_recursive_download_restores_existing_target_when_install_rename_fails(
 
         def communicate(self, timeout=None):
             if self.cmd[0].endswith("tar"):
-                Path(self.cmd[4], "input.scs").write_text("new netlist\n", encoding="utf-8")
+                extracted = Path(self.cmd[4], "netlist")
+                extracted.mkdir()
+                (extracted / "input.scs").write_text("new netlist\n", encoding="utf-8")
             return b"", b""
 
         def wait(self, timeout=None):
@@ -248,7 +256,7 @@ def test_recursive_download_restores_existing_target_when_install_rename_fails(
     original_rename = Path.rename
 
     def fail_temp_install(self: Path, target: Path):
-        if self.name.startswith(".netlist.tmp-"):
+        if self.name == "netlist" and self.parent.name.startswith(".netlist.tmp-"):
             raise OSError("install failed")
         return original_rename(self, target)
 

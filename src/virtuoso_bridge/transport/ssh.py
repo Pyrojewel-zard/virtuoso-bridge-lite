@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 
 from virtuoso_bridge.env import load_vb_env
@@ -922,21 +922,28 @@ class SSHRunner:
         timeout: int,
     ) -> CommandResult:
         """Download a directory recursively using tar czf piped over SSH."""
-        # Extract into a sibling temp directory first; replace the requested
-        # target only after both SSH and local tar have succeeded.
+        # Extract into a sibling staging directory first; replace the requested
+        # target only after both SSH and local tar have succeeded.  The archive
+        # contains the remote directory itself rather than "." so BSD tar does
+        # not try to restore metadata on the pre-created staging directory.
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = local_path.with_name(f".{local_path.name}.tmp-{uuid.uuid4().hex}")
-        tmp_path.mkdir(parents=True)
+        stage_path = local_path.with_name(f".{local_path.name}.tmp-{uuid.uuid4().hex}")
+        stage_path.mkdir(parents=True)
+        remote_basename = PurePosixPath(remote_path.rstrip("/")).name
+        if not remote_basename:
+            shutil.rmtree(stage_path, ignore_errors=True)
+            return CommandResult(returncode=1, stdout="", stderr=f"Invalid remote directory path: {remote_path}")
 
         remote_path_q = shlex.quote(remote_path)
         inner_cmd = (
             f"p={remote_path_q}; "
-            'cd "$p" && tar czf - .'
+            'd=$(dirname "$p"); b=$(basename "$p"); '
+            'cd "$d" && tar czf - "$b"'
         )
         remote_cmd = f"sh -c {shlex.quote(inner_cmd)}"
 
         ssh_cmd = self._build_ssh_base() + [remote_cmd]
-        tar_cmd = [self._tar_cmd, "xzf", "-", "-C", str(tmp_path).replace("\\", "/")]
+        tar_cmd = [self._tar_cmd, "xzf", "-", "-C", str(stage_path).replace("\\", "/")]
 
         if self._verbose:
             print(f"[cmd] {' '.join(ssh_cmd)} | {' '.join(tar_cmd)}  # download {remote_path} -> {local_path}", flush=True)
@@ -964,11 +971,11 @@ class SSHRunner:
         except subprocess.TimeoutExpired:
             ssh_proc.kill()
             tar_proc.kill()
-            shutil.rmtree(tmp_path, ignore_errors=True)
+            shutil.rmtree(stage_path, ignore_errors=True)
             raise
 
         if ssh_proc.returncode != 0 or tar_proc.returncode != 0:
-            shutil.rmtree(tmp_path, ignore_errors=True)
+            shutil.rmtree(stage_path, ignore_errors=True)
             ssh_err = _as_text(ssh_proc.stderr.read()) if ssh_proc.stderr else ""
             tar_err_str = _as_text(tar_err)
             combined_err = f"SSH error: {ssh_err.strip()} | Tar error: {tar_err_str.strip()}"
@@ -976,16 +983,24 @@ class SSHRunner:
             return CommandResult(returncode=ssh_proc.returncode or tar_proc.returncode, stdout="", stderr=combined_err)
 
         backup_path: Path | None = None
+        extracted_path = stage_path / remote_basename
+        if not (extracted_path.exists() or extracted_path.is_symlink()):
+            shutil.rmtree(stage_path, ignore_errors=True)
+            return CommandResult(
+                returncode=1,
+                stdout="",
+                stderr=f"Downloaded archive did not contain expected directory: {remote_basename}",
+            )
         try:
             if local_path.exists() or local_path.is_symlink():
                 backup_path = local_path.with_name(
                     f".{local_path.name}.backup-{uuid.uuid4().hex}"
                 )
                 local_path.rename(backup_path)
-            tmp_path.rename(local_path)
+            extracted_path.rename(local_path)
         except Exception:
-            if tmp_path.exists():
-                shutil.rmtree(tmp_path, ignore_errors=True)
+            if stage_path.exists():
+                shutil.rmtree(stage_path, ignore_errors=True)
             if (
                 backup_path is not None
                 and not (local_path.exists() or local_path.is_symlink())
@@ -999,6 +1014,7 @@ class SSHRunner:
                     shutil.rmtree(backup_path)
                 else:
                     backup_path.unlink()
+            shutil.rmtree(stage_path, ignore_errors=True)
         return CommandResult(returncode=0, stdout="", stderr="")
 
     def _upload_via_tar(
